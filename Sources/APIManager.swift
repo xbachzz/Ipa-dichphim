@@ -157,7 +157,8 @@ public class APIManager {
         origVolume: Double,
         trimStart: Double,
         trimEnd: Double,
-        completion: @escaping (Result<URL, Error>) -> Void
+        renderPreset: String = "ultrafast",
+        completion: @escaping (Result<RenderResult, Error>) -> Void
     ) {
         guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/step/render") else { return }
 
@@ -175,7 +176,8 @@ public class APIManager {
             "dub_volume": dubVolume,
             "orig_volume": origVolume,
             "trim_start": trimStart,
-            "trim_end": trimEnd
+            "trim_end": trimEnd,
+            "render_preset": renderPreset
         ]
         if let mask = maskRect, let mData = try? JSONEncoder().encode(mask), let mJson = try? JSONSerialization.jsonObject(with: mData) {
             body["mask_rect"] = mJson
@@ -195,13 +197,16 @@ public class APIManager {
                 return
             }
 
+            let renderTime = json["render_time_sec"] as? Double ?? 0.0
+            let speedRatio = json["speed_ratio"] as? Double ?? 1.0
+
             // Tải file về
             let fullDownloadURL = "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))\(downloadUrlPath)"
-            self?.downloadFinalFile(from: fullDownloadURL, projectId: projectId, completion: completion)
+            self?.downloadFinalFile(from: fullDownloadURL, projectId: projectId, renderTime: renderTime, speedRatio: speedRatio, completion: completion)
         }.resume()
     }
 
-    private func downloadFinalFile(from urlString: String, projectId: String, completion: @escaping (Result<URL, Error>) -> Void) {
+    private func downloadFinalFile(from urlString: String, projectId: String, renderTime: Double, speedRatio: Double, completion: @escaping (Result<RenderResult, Error>) -> Void) {
         guard let url = URL(string: urlString) else { return }
         URLSession.shared.downloadTask(with: url) { tempURL, _, error in
             if let error = error { completion(.failure(error)); return }
@@ -214,7 +219,8 @@ public class APIManager {
             try? FileManager.default.removeItem(at: destURL)
             do {
                 try FileManager.default.moveItem(at: tempURL, to: destURL)
-                completion(.success(destURL))
+                let result = RenderResult(url: destURL, renderTimeSec: renderTime, speedRatio: speedRatio)
+                completion(.success(result))
             } catch {
                 completion(.failure(error))
             }

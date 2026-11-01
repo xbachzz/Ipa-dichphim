@@ -79,6 +79,12 @@ public struct ContentView: View {
     @State private var isRendering: Bool = false
     @State private var outputVideoURL: URL? = nil
     @State private var resultPlayer: AVPlayer? = nil
+    @State private var renderPreset: String = "ultrafast" // "ultrafast" or "veryfast"
+    @State private var lastRenderTimeSec: Double = 0.0
+    @State private var lastSpeedRatio: Double = 0.0
+    @State private var renderElapsedSeconds: Int = 0
+    @State private var renderTimerToken: Timer? = nil
+    @AppStorage("always_keep_screen_awake") private var alwaysKeepScreenAwake: Bool = true
 
     // Thông báo, Sheets & Settings
     @State private var showSettingsModal: Bool = false
@@ -236,6 +242,14 @@ public struct ContentView: View {
             }
             Button("Hủy", role: .cancel) {}
         }
+        .onAppear {
+            updateScreenIdleTimer()
+        }
+        .onChange(of: isExtractingSTT) { _ in updateScreenIdleTimer() }
+        .onChange(of: isTranslating) { _ in updateScreenIdleTimer() }
+        .onChange(of: isGeneratingTTS) { _ in updateScreenIdleTimer() }
+        .onChange(of: isRendering) { _ in updateScreenIdleTimer() }
+        .onChange(of: alwaysKeepScreenAwake) { _ in updateScreenIdleTimer() }
     }
 
     // MARK: - Top Navigation Bar
@@ -1356,6 +1370,71 @@ public struct ContentView: View {
             .cornerRadius(12)
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(hex: "1F2738"), lineWidth: 1))
 
+            // Tùy chọn tốc độ Render Video
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Image(systemName: "bolt.fill")
+                        .foregroundColor(Color(hex: "00ADB5"))
+                    Text("Tùy Chọn Tốc Độ Render Video")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                }
+
+                HStack(spacing: 8) {
+                    Button(action: {
+                        renderPreset = "ultrafast"
+                        Haptic.play(.light)
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: renderPreset == "ultrafast" ? "bolt.circle.fill" : "circle")
+                                .foregroundColor(renderPreset == "ultrafast" ? Color(hex: "00ADB5") : Color(hex: "8D99AE"))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("⚡ Siêu Tốc (Ultrafast)")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(.white)
+                                Text("Nhanh gấp 3-4 lần, nét 1080p")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(Color(hex: "8D99AE"))
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(renderPreset == "ultrafast" ? Color(hex: "00ADB5").opacity(0.18) : Color(hex: "1F2738"))
+                        .cornerRadius(10)
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(renderPreset == "ultrafast" ? Color(hex: "00ADB5") : Color.clear, lineWidth: 1.5))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: {
+                        renderPreset = "veryfast"
+                        Haptic.play(.light)
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: renderPreset == "veryfast" ? "circle.fill" : "circle")
+                                .foregroundColor(renderPreset == "veryfast" ? Color(hex: "00ADB5") : Color(hex: "8D99AE"))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("🎨 Tiêu Chuẩn (Veryfast)")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(.white)
+                                Text("Nén chuẩn CRF 23")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(Color(hex: "8D99AE"))
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(renderPreset == "veryfast" ? Color(hex: "00ADB5").opacity(0.18) : Color(hex: "1F2738"))
+                        .cornerRadius(10)
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(renderPreset == "veryfast" ? Color(hex: "00ADB5") : Color.clear, lineWidth: 1.5))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(14)
+            .background(Color(hex: "141824"))
+            .cornerRadius(12)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(hex: "1F2738"), lineWidth: 1))
+
             // Nút Render Xuất Video Hoàn Thiện
             Button(action: {
                 Haptic.play(.heavy)
@@ -1387,6 +1466,27 @@ public struct ContentView: View {
                         Text("🎬 VIDEO THÀNH PHẨM ĐÃ XUẤT XONG")
                             .font(.system(size: 13, weight: .black))
                             .foregroundColor(.white)
+                    }
+
+                    if lastRenderTimeSec > 0 {
+                        HStack(spacing: 8) {
+                            Image(systemName: "timer")
+                                .foregroundColor(Color(hex: "00ADB5"))
+                            Text("Thời gian render: \(String(format: "%.1fs", lastRenderTimeSec))")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(.white)
+
+                            if lastSpeedRatio > 0 {
+                                Text("• Tốc độ: \(String(format: "%.1fx", lastSpeedRatio))")
+                                    .font(.system(size: 12, weight: .heavy))
+                                    .foregroundColor(Color(hex: "10B981"))
+                            }
+                            Spacer()
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(Color(hex: "1F2738"))
+                        .cornerRadius(8)
                     }
 
                     VideoPlayer(player: resP)
@@ -1523,6 +1623,13 @@ public struct ContentView: View {
 
     func runRender() {
         isRendering = true
+        renderElapsedSeconds = 0
+        renderTimerToken?.invalidate()
+        renderTimerToken = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            renderElapsedSeconds += 1
+        }
+        updateScreenIdleTimer()
+
         let mask = enableMaskSub ? MaskRect(x: 0.03, y: Double(maskSubYRatio), w: 0.94, h: Double(maskSubHeightRatio), style: maskSubStyle) : nil
         let logo = enableMaskLogo ? MaskRect(x: Double(logoXRatio), y: Double(logoYRatio), w: Double(logoWidthRatio), h: Double(logoHeightRatio), style: "delogo") : nil
 
@@ -1535,16 +1642,24 @@ public struct ContentView: View {
             dubVolume: dubVolume,
             origVolume: origVolume,
             trimStart: trimStart,
-            trimEnd: trimEnd
+            trimEnd: trimEnd,
+            renderPreset: renderPreset
         ) { res in
             DispatchQueue.main.async {
                 isRendering = false
+                renderTimerToken?.invalidate()
+                renderTimerToken = nil
+                updateScreenIdleTimer()
+
                 switch res {
-                case .success(let destURL):
-                    outputVideoURL = destURL
-                    resultPlayer = AVPlayer(url: destURL)
+                case .success(let resResult):
+                    outputVideoURL = resResult.url
+                    lastRenderTimeSec = resResult.renderTimeSec
+                    lastSpeedRatio = resResult.speedRatio
+                    resultPlayer = AVPlayer(url: resResult.url)
                     Haptic.notify(.success)
-                    alertMessage = "🎉 Video đã render hoàn tất! Bạn có thể lưu vào Thư viện Ảnh hoặc chia sẻ ngay."
+                    let timeInfo = resResult.renderTimeSec > 0 ? " trong \(String(format: "%.1fs", resResult.renderTimeSec))" : ""
+                    alertMessage = "🎉 Video đã render hoàn tất\(timeInfo)! Bạn có thể lưu vào Thư viện Ảnh hoặc chia sẻ ngay."
                     showAlert = true
                 case .failure(let err):
                     alertMessage = "Lỗi render video: \(err.localizedDescription)"
@@ -1576,25 +1691,65 @@ public struct ContentView: View {
 
     var loadingOverlayView: some View {
         ZStack {
-            Color.black.opacity(0.82).ignoresSafeArea()
-            VStack(spacing: 16) {
+            Color.black.opacity(0.85).ignoresSafeArea()
+            VStack(spacing: 18) {
                 ProgressView()
                     .scaleEffect(1.6)
                     .accentColor(Color(hex: "00ADB5"))
-                Text(
-                    isExtractingSTT ? "Đang trích xuất SRT qua CapCut STT..." :
-                    (isTranslating ? "Đang dịch kịch bản qua 9Router AI..." :
-                    (isGeneratingTTS ? "Đang tạo giọng đọc CapCut SAMI..." : "Đang render video FFmpeg chất lượng cao..."))
-                )
-                .font(.system(size: 14, weight: .bold))
-                .foregroundColor(.white)
-                .multilineTextAlignment(.center)
+
+                VStack(spacing: 6) {
+                    Text(
+                        isExtractingSTT ? "Đang trích xuất SRT qua CapCut STT..." :
+                        (isTranslating ? "Đang dịch kịch bản qua 9Router AI..." :
+                        (isGeneratingTTS ? "Đang tạo giọng đọc CapCut SAMI..." : "Đang render video FFmpeg siêu tốc..."))
+                    )
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(.white)
+                    .multilineTextAlignment(.center)
+
+                    if isRendering {
+                        HStack(spacing: 6) {
+                            Image(systemName: "stopwatch")
+                                .foregroundColor(Color(hex: "00ADB5"))
+                            Text("Thời gian xử lý: \(formatSeconds(renderElapsedSeconds))")
+                                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                                .foregroundColor(Color(hex: "00ADB5"))
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+
+                HStack(spacing: 6) {
+                    Image(systemName: "sun.max.fill")
+                        .foregroundColor(.yellow)
+                        .font(.system(size: 12))
+                    Text("Màn hình đang được giữ luôn sáng...")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(Color(hex: "8D99AE"))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color(hex: "1F2738").opacity(0.8))
+                .cornerRadius(12)
             }
-            .padding(32)
+            .padding(28)
+            .frame(maxWidth: 320)
             .background(Color(hex: "141824"))
-            .cornerRadius(18)
-            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color(hex: "00ADB5").opacity(0.4), lineWidth: 1.2))
+            .cornerRadius(20)
+            .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color(hex: "00ADB5").opacity(0.5), lineWidth: 1.5))
+            .shadow(color: Color(hex: "00ADB5").opacity(0.2), radius: 20)
         }
+    }
+
+    func updateScreenIdleTimer() {
+        let shouldKeepAwake = alwaysKeepScreenAwake || isExtractingSTT || isTranslating || isGeneratingTTS || isRendering
+        UIApplication.shared.isIdleTimerDisabled = shouldKeepAwake
+    }
+
+    func formatSeconds(_ sec: Int) -> String {
+        let m = sec / 60
+        let s = sec % 60
+        return String(format: "%02d:%02d", m, s)
     }
 
     // MARK: - Màn hình chọn video ban đầu (Studio Hub)
@@ -1793,6 +1948,14 @@ public struct ContentView: View {
                             .font(.system(size: 12))
                             .foregroundColor(isServerConnected ? Color(hex: "10B981") : .red)
                     }
+                }
+
+                Section(header: Text("TÙY CHỌN MÀN HÌNH & HIỆU NĂNG")) {
+                    Toggle("Luôn giữ màn hình sáng khi làm việc", isOn: $alwaysKeepScreenAwake)
+                        .font(.system(size: 14, weight: .medium))
+                    Text("Tự động ngăn màn hình tắt hoặc khóa khi ứng dụng đang mở hoặc đang xử lý các tác vụ dịch, TTS và render video.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color(hex: "8D99AE"))
                 }
 
                 Section(header: Text("THÔNG TIN HỆ THỐNG")) {

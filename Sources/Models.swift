@@ -42,3 +42,15 @@ public struct TaskStatusResponse: Codable {
     public var download_url: String?
     public var error: String?
 }
+
+public struct RenderResult {
+    public var url: URL
+    public var renderTimeSec: Double
+    public var speedRatio: Double
+
+    public init(url: URL, renderTimeSec: Double = 0.0, speedRatio: Double = 1.0) {
+        self.url = url
+        self.renderTimeSec = renderTimeSec
+        self.speedRatio = speedRatio
+    }
+}

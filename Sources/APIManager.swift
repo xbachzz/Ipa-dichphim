@@ -238,4 +238,27 @@ public class APIManager {
             }
         }.resume()
     }
+
+    // Kiểm tra kết nối máy chủ VPS
+    public func testConnection(serverURL: String, completion: @escaping (Bool, String) -> Void) {
+        guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/voices") else {
+            completion(false, "Đường dẫn server không hợp lệ")
+            return
+        }
+        let startTime = Date()
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 8
+
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            let ms = Int(Date().timeIntervalSince(startTime) * 1000)
+            if let err = err {
+                completion(false, "Không thể kết nối (\(ms)ms): \(err.localizedDescription)")
+            } else if let http = resp as? HTTPURLResponse, http.statusCode == 200 {
+                completion(true, "Kết nối thành công (\(ms)ms) - Server & Voice API sẵn sàng")
+            } else {
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                completion(false, "Server phản hồi mã lỗi HTTP \(code)")
+            }
+        }.resume()
+    }
 }

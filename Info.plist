@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>TranslateDubApp</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.videotranslator.dubbing</string>
+    <key>CFBundleName</key>
+    <string>Dịch &amp; Lồng Tiếng AI</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Ứng dụng cần quyền truy cập thư viện để chọn video cần dịch.</string>
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>Ứng dụng cần quyền lưu video sau khi dịch vào album ảnh của bạn.</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
+</dict>
+</plist>

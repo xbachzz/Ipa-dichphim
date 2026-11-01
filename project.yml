@@ -1,0 +1,20 @@
+name: TranslateDubApp
+options:
+  bundleIdPrefix: com.videotranslator
+targets:
+  TranslateDubApp:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Sources
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: "Dịch & Lồng Tiếng AI"
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+        NSPhotoLibraryUsageDescription: "Ứng dụng cần quyền chọn video từ thư viện."
+        NSPhotoLibraryAddUsageDescription: "Ứng dụng cần quyền lưu video sau khi dịch vào Photos."
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true

@@ -39,13 +39,43 @@ jobs:
           echo "Found app at: $APP_PATH"
           cp -r "$APP_PATH" Payload/
           
-          # Thực hiện Ad-Hoc Code Signing đảm bảo binary có LC_CODE_SIGNATURE và thư mục _CodeSignature
+          # Đảm bảo Info.plist có đầy đủ ATS (cho phép HTTP) và LaunchScreen (tránh khoảng trống đen)
+          python3 -c "
+          import plistlib
+          plist_path = 'Payload/TranslateDubApp.app/Info.plist'
+          with open(plist_path, 'rb') as f:
+              pl = plistlib.load(f)
+
+          # Cấu hình App Transport Security cho phép kết nối HTTP VPS
+          pl['NSAppTransportSecurity'] = {
+              'NSAllowsArbitraryLoads': True,
+              'NSAllowsArbitraryLoadsInWebContent': True,
+              'NSAllowsLocalNetworking': True,
+              'NSExceptionDomains': {
+                  '103.211.206.176': {
+                      'NSIncludesSubdomains': True,
+                      'NSTemporaryExceptionAllowsInsecureHTTPLoads': True,
+                      'NSTemporaryExceptionMinimumTLSVersion': 'TLSv1.0'
+                  }
+              }
+          }
+
+          # Cấu hình toàn màn hình tránh viền đen trên dưới (Letterboxing)
+          pl['UILaunchStoryboardName'] = 'LaunchScreen'
+          pl['UILaunchScreen'] = {'UIColorName': '', 'UIImageRespectsSafeAreaInsets': True}
+
+          with open(plist_path, 'wb') as f:
+              plistlib.dump(pl, f)
+          print('>>> Info.plist verified & patched with ATS & LaunchScreen')
+          "
+          
+          # Ký Ad-Hoc cho app bundle với LC_CODE_SIGNATURE hợp lệ
           codesign --force --deep --sign - "Payload/TranslateDubApp.app"
           
-          # Xác thực tính toàn vẹn chữ ký Ad-Hoc
+          # Kiểm tra chữ ký
           codesign -dvvv "Payload/TranslateDubApp.app"
           
-          # Đóng gói chuẩn IPA với cờ -qry bảo lưu symbolic links và permissions
+          # Đóng gói chuẩn IPA (-qry giữ symbolic links và file permissions)
           zip -qry TranslateDubApp.ipa Payload
           rm -rf Payload
 

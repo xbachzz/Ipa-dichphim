@@ -1,40 +1,59 @@
 import Foundation
+import AVFoundation
 
-class APIManager {
-    static let shared = APIManager()
+public class APIManager {
+    public static let shared = APIManager()
+    private var previewAudioPlayer: AVAudioPlayer?
+
     private init() {}
 
-    func uploadAndTranslate(
+    public func createTask(
         serverURL: String,
         videoURL: URL,
-        srtURL: URL?,
         voiceID: String,
         genre: String,
-        completion: @escaping (Result<URL, Error>) -> Void
+        trimStart: Double,
+        trimEnd: Double,
+        maskRect: MaskRect?,
+        dubVolume: Double,
+        origVolume: Double,
+        cues: [SubtitleCue]?,
+        completion: @escaping (Result<String, Error>) -> Void
     ) {
-        guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/translate-and-dub") else {
+        guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/tasks/create") else {
             completion(.failure(NSError(domain: "URL", code: -1, userInfo: [NSLocalizedDescriptionKey: "Đường dẫn server không hợp lệ"])))
             return
         }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 600 // 10 phút tối đa cho render video
+        request.timeoutInterval = 120
 
         let boundary = "Boundary-\(UUID().uuidString)"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
         var body = Data()
 
-        // Thêm trường voice_id
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"voice_id\"\r\n\r\n".data(using: .utf8)!)
-        body.append("\(voiceID)\r\n".data(using: .utf8)!)
+        func addField(name: String, value: String) {
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
+            body.append("\(value)\r\n".data(using: .utf8)!)
+        }
 
-        // Thêm trường genre
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"genre\"\r\n\r\n".data(using: .utf8)!)
-        body.append("\(genre)\r\n".data(using: .utf8)!)
+        addField(name: "voice_id", value: voiceID)
+        addField(name: "genre", value: genre)
+        addField(name: "trim_start", value: String(format: "%.2f", trimStart))
+        addField(name: "trim_end", value: String(format: "%.2f", trimEnd))
+        addField(name: "dub_volume", value: String(format: "%.2f", dubVolume))
+        addField(name: "orig_volume", value: String(format: "%.2f", origVolume))
+
+        if let mask = maskRect, let maskData = try? JSONEncoder().encode(mask), let maskJson = String(data: maskData, encoding: .utf8) {
+            addField(name: "mask_rect", value: maskJson)
+        }
+
+        if let cues = cues, let cuesData = try? JSONEncoder().encode(cues), let cuesJson = String(data: cuesData, encoding: .utf8) {
+            addField(name: "cues", value: cuesJson)
+        }
 
         // Đính kèm file Video MP4
         if let videoData = try? Data(contentsOf: videoURL) {
@@ -45,15 +64,6 @@ class APIManager {
             body.append("\r\n".data(using: .utf8)!)
         }
 
-        // Đính kèm file SRT (nếu có)
-        if let srtURL = srtURL, let srtData = try? Data(contentsOf: srtURL) {
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"srt\"; filename=\"input.srt\"\r\n".data(using: .utf8)!)
-            body.append("Content-Type: text/plain\r\n\r\n".data(using: .utf8)!)
-            body.append(srtData)
-            body.append("\r\n".data(using: .utf8)!)
-        }
-
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
         let task = URLSession.shared.uploadTask(with: request, from: body) { data, response, error in
@@ -61,23 +71,92 @@ class APIManager {
                 completion(.failure(error))
                 return
             }
-
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200, let data = data else {
-                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Máy chủ trả về lỗi khi xử lý"])))
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let taskId = json["task_id"] as? String else {
+                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Không nhận được Task ID từ máy chủ"])))
                 return
             }
+            completion(.success(taskId))
+        }
+        task.resume()
+    }
 
-            // Lưu file video nhận được về thư mục Documents của iPhone
-            let outputDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            let destURL = outputDir.appendingPathComponent("dubbed_\(Int(Date().timeIntervalSince1970)).mp4")
+    public func pollTaskStatus(
+        serverURL: String,
+        taskId: String,
+        completion: @escaping (Result<TaskStatusResponse, Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/tasks/\(taskId)/status") else {
+            return
+        }
 
+        let task = URLSession.shared.dataTask(with: url) { data, response, error in
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+            guard let data = data else {
+                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Dữ liệu trống"])))
+                return
+            }
             do {
-                try data.write(to: destURL)
-                completion(.success(destURL))
+                let statusRes = try JSONDecoder().decode(TaskStatusResponse.self, from: data)
+                completion(.success(statusRes))
             } catch {
                 completion(.failure(error))
             }
         }
         task.resume()
+    }
+
+    public func downloadResultVideo(
+        serverURL: String,
+        taskId: String,
+        completion: @escaping (Result<URL, Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/tasks/\(taskId)/download") else {
+            return
+        }
+
+        let downloadTask = URLSession.shared.downloadTask(with: url) { tempURL, response, error in
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+            guard let tempURL = tempURL else {
+                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Lỗi tải file"])))
+                return
+            }
+            let outputDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let destURL = outputDir.appendingPathComponent("final_\(taskId).mp4")
+            try? FileManager.default.removeItem(at: destURL)
+
+            do {
+                try FileManager.default.moveItem(at: tempURL, to: destURL)
+                completion(.success(destURL))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+        downloadTask.resume()
+    }
+
+    public func playTTSPreview(serverURL: String, text: String, voiceID: String) {
+        guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/tts/preview") else { return }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = ["text": text, "voice_id": voiceID]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
+            guard let data = data else { return }
+            DispatchQueue.main.async {
+                self?.previewAudioPlayer = try? AVAudioPlayer(data: data)
+                self?.previewAudioPlayer?.play()
+            }
+        }.resume()
     }
 }

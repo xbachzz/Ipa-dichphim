@@ -2,14 +2,6 @@ import SwiftUI
 import PhotosUI
 import AVKit
 
-struct VoiceItem: Identifiable, Hashable {
-    let id: String
-    let name: String
-    let tag: String
-    let gender: String
-    let iconName: String
-}
-
 public struct ContentView: View {
     @AppStorage("server_url") private var serverURL: String = "http://103.211.206.176:9005"
 
@@ -51,6 +43,8 @@ public struct ContentView: View {
     @State private var selectedVoice: String = "BV421_vivn_streaming"
     @State private var isGeneratingTTS: Bool = false
     @State private var ttsReady: Bool = false
+    @State private var selectedVoiceCategory: String = "Tất Cả"
+    @State private var voiceSearchQuery: String = ""
 
     // CÔNG ĐOẠN 5 & 6: Ghép vào video, chỉnh sửa tùy chỉnh & xuất
     @State private var dubVolume: Double = 1.0
@@ -66,12 +60,34 @@ public struct ContentView: View {
     @State private var showAlert: Bool = false
     @State private var alertMessage: String = ""
 
-    let voices: [VoiceItem] = [
-        VoiceItem(id: "BV421_vivn_streaming", name: "Nam Tri Thức", tag: "Review Phim / Kể chuyện", gender: "Nam", iconName: "person.crop.circle.badge.checkmark"),
-        VoiceItem(id: "multi_female_richgirl_uranus_bigtts", name: "Nữ Sang Trọng", tag: "Phim Ngôn Tình / Kịch Tính", gender: "Nữ", iconName: "sparkles"),
-        VoiceItem(id: "BV001_streaming", name: "Nữ Truyền Cảm", tag: "Đọc Truyện / Tình Cảm", gender: "Nữ", iconName: "heart.fill"),
-        VoiceItem(id: "BV007_streaming", name: "Nam Trầm Ấm", tag: "Thời Sự / Phóng Sự", gender: "Nam", iconName: "mic.fill")
-    ]
+    let voiceCategories = ["Tất Cả", "Review Phim", "Giọng Nam", "Giọng Nữ", "Bản Tin", "Độc Lạ / Hài"]
+
+    var filteredVoices: [VoiceItem] {
+        VoiceCatalog.allVietnameseVoices.filter { v in
+            let matchesCat = (selectedVoiceCategory == "Tất Cả") || (v.category == selectedVoiceCategory)
+            let q = voiceSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+            let matchesSearch = q.isEmpty ||
+                v.name.localizedCaseInsensitiveContains(q) ||
+                v.category.localizedCaseInsensitiveContains(q) ||
+                v.gender.localizedCaseInsensitiveContains(q)
+            return matchesCat && matchesSearch
+        }
+    }
+
+    var currentVoiceItem: VoiceItem? {
+        VoiceCatalog.allVietnameseVoices.first(where: { $0.id == selectedVoice })
+    }
+
+    func categoryBadgeColor(_ cat: String) -> Color {
+        switch cat {
+        case "Review Phim": return Color.purple
+        case "Giọng Nam": return Color.blue
+        case "Giọng Nữ": return Color.pink
+        case "Bản Tin": return Color.orange
+        case "Độc Lạ / Hài": return Color.yellow
+        default: return Color(hex: "00ADB5")
+        }
+    }
 
     let genres = [
         ("phim_chung", "Đời thường / TikTok", "flame.fill"),
@@ -586,54 +602,207 @@ public struct ContentView: View {
     // MARK: - CÔNG ĐOẠN 4: Chuyển thành âm thanh (CapCut TTS)
     var step4TTSView: some View {
         VStack(alignment: .leading, spacing: 14) {
-            stepHeader(stepNum: "4", title: "Chuyển Văn Bản Thành Âm Thanh", desc: "CapCut SAMI TTS sẽ sinh file giọng đọc cảm xúc cho từng câu thoại.")
+            stepHeader(stepNum: "4", title: "Chuyển Văn Bản Thành Âm Thanh", desc: "Thư viện 24 giọng đọc CapCut AI Việt Nam (Review Phim, Thời Sự, Độc Lạ...).")
 
-            VStack(spacing: 8) {
-                ForEach(voices) { v in
-                    Button(action: { selectedVoice = v.id }) {
-                        HStack(spacing: 12) {
-                            Image(systemName: v.iconName)
-                                .font(.system(size: 18))
-                                .foregroundColor(selectedVoice == v.id ? Color(hex: "00ADB5") : .white)
-                                .frame(width: 36, height: 36)
-                                .background(selectedVoice == v.id ? Color(hex: "00ADB5").opacity(0.18) : Color(hex: "1A202C"))
-                                .clipShape(Circle())
+            // Selected Voice Preview Banner
+            if let cur = currentVoiceItem {
+                HStack(spacing: 12) {
+                    Image(systemName: cur.iconName)
+                        .font(.system(size: 20))
+                        .foregroundColor(Color(hex: "00ADB5"))
+                        .frame(width: 44, height: 44)
+                        .background(Color(hex: "00ADB5").opacity(0.18))
+                        .clipShape(Circle())
 
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(v.name)
-                                    .font(.system(size: 13, weight: .bold))
-                                    .foregroundColor(.white)
-                                Text(v.tag)
-                                    .font(.system(size: 11))
-                                    .foregroundColor(Color(hex: "8D99AE"))
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(cur.name)
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.white)
+                            Text(cur.gender)
+                                .font(.system(size: 10, weight: .semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(cur.gender == "Nam" ? Color.blue.opacity(0.3) : Color.pink.opacity(0.3))
+                                .foregroundColor(cur.gender == "Nam" ? Color.blue : Color.pink)
+                                .cornerRadius(4)
+                        }
+                        Text("Thể loại: \(cur.category)")
+                            .font(.system(size: 11))
+                            .foregroundColor(Color(hex: "8D99AE"))
+                    }
+
+                    Spacer()
+
+                    Button(action: {
+                        APIManager.shared.playTTSPreview(
+                            serverURL: serverURL,
+                            text: "Xin chào! Đây là bản nghe thử giọng \(cur.name).",
+                            voiceID: cur.id
+                        )
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "speaker.wave.2.fill")
+                            Text("Nghe thử")
+                                .font(.system(size: 11, weight: .bold))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(Color(hex: "00ADB5"))
+                        .foregroundColor(.black)
+                        .cornerRadius(8)
+                    }
+                }
+                .padding(12)
+                .background(Color(hex: "1A2333"))
+                .cornerRadius(12)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(hex: "00ADB5"), lineWidth: 1.5))
+            }
+
+            // Search Bar & Filter Section
+            VStack(spacing: 10) {
+                // Search field
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(Color(hex: "8D99AE"))
+                    TextField("Tìm theo tên, thể loại (vd: Review, Nam, Nữ)...", text: $voiceSearchQuery)
+                        .font(.system(size: 13))
+                        .foregroundColor(.white)
+                    if !voiceSearchQuery.isEmpty {
+                        Button(action: { voiceSearchQuery = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(Color(hex: "8D99AE"))
+                        }
+                    }
+                }
+                .padding(10)
+                .background(Color(hex: "161A26"))
+                .cornerRadius(10)
+
+                // Category Chips ScrollView
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(voiceCategories, id: \.self) { cat in
+                            Button(action: {
+                                selectedVoiceCategory = cat
+                            }) {
+                                HStack(spacing: 4) {
+                                    if cat == "Review Phim" {
+                                        Image(systemName: "film.fill")
+                                    } else if cat == "Giọng Nam" {
+                                        Image(systemName: "person.fill")
+                                    } else if cat == "Giọng Nữ" {
+                                        Image(systemName: "sparkles")
+                                    } else if cat == "Bản Tin" {
+                                        Image(systemName: "newspaper.fill")
+                                    } else if cat == "Độc Lạ / Hài" {
+                                        Image(systemName: "theatermasks.fill")
+                                    }
+                                    Text(cat)
+                                        .font(.system(size: 12, weight: .semibold))
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(selectedVoiceCategory == cat ? Color(hex: "00ADB5") : Color(hex: "1E2433"))
+                                .foregroundColor(selectedVoiceCategory == cat ? .black : Color(hex: "E0E6ED"))
+                                .cornerRadius(16)
                             }
-                            Spacer()
-                            if selectedVoice == v.id {
-                                Image(systemName: "checkmark.circle.fill")
+                        }
+                    }
+                }
+            }
+
+            // Voice List (Filtered)
+            Text("Danh Sách Giọng Đọc (\(filteredVoices.count)/24)")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(Color(hex: "8D99AE"))
+
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(filteredVoices) { v in
+                        HStack(spacing: 12) {
+                            Button(action: { selectedVoice = v.id }) {
+                                HStack(spacing: 12) {
+                                    Image(systemName: v.iconName)
+                                        .font(.system(size: 16))
+                                        .foregroundColor(selectedVoice == v.id ? Color(hex: "00ADB5") : .white)
+                                        .frame(width: 34, height: 34)
+                                        .background(selectedVoice == v.id ? Color(hex: "00ADB5").opacity(0.18) : Color(hex: "1E2433"))
+                                        .clipShape(Circle())
+
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(v.name)
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(.white)
+                                            .lineLimit(1)
+                                        HStack(spacing: 6) {
+                                            Text(v.category)
+                                                .font(.system(size: 10, weight: .medium))
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(categoryBadgeColor(v.category).opacity(0.2))
+                                                .foregroundColor(categoryBadgeColor(v.category))
+                                                .cornerRadius(4)
+                                            Text(v.gender)
+                                                .font(.system(size: 10))
+                                                .foregroundColor(Color(hex: "8D99AE"))
+                                        }
+                                    }
+                                    Spacer()
+                                    if selectedVoice == v.id {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.system(size: 18))
+                                            .foregroundColor(Color(hex: "00ADB5"))
+                                    }
+                                }
+                            }
+                            .buttonStyle(PlainButtonStyle())
+
+                            // Preview button
+                            Button(action: {
+                                APIManager.shared.playTTSPreview(
+                                    serverURL: serverURL,
+                                    text: "Xin chào! Đây là bản nghe thử giọng \(v.name).",
+                                    voiceID: v.id
+                                )
+                            }) {
+                                Image(systemName: "speaker.wave.2.fill")
+                                    .font(.system(size: 13))
                                     .foregroundColor(Color(hex: "00ADB5"))
+                                    .padding(8)
+                                    .background(Color(hex: "1F2738"))
+                                    .clipShape(Circle())
                             }
                         }
                         .padding(10)
                         .background(selectedVoice == v.id ? Color(hex: "16222F") : Color(hex: "141824"))
                         .cornerRadius(10)
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(selectedVoice == v.id ? Color(hex: "00ADB5") : Color.clear, lineWidth: 1.2))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(selectedVoice == v.id ? Color(hex: "00ADB5") : Color(hex: "232B3E"), lineWidth: 1.2))
                     }
                 }
+                .padding(.vertical, 2)
             }
+            .frame(maxHeight: 280)
 
             Button(action: runTTS) {
-                HStack {
+                HStack(spacing: 8) {
                     Spacer()
-                    Image(systemName: "waveform.and.mic")
-                    Text("Tạo Giọng Đọc Lồng Tiếng (CapCut TTS)")
+                    if isGeneratingTTS {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    } else {
+                        Image(systemName: "waveform.and.mic")
+                    }
+                    Text(isGeneratingTTS ? "Đang Tạo Giọng Đọc..." : "Tạo Giọng Đọc Lồng Tiếng (CapCut TTS)")
                         .fontWeight(.bold)
                     Spacer()
                 }
                 .padding()
-                .background(Color.blue)
+                .background(isGeneratingTTS ? Color.gray : Color.blue)
                 .foregroundColor(.white)
                 .cornerRadius(12)
             }
+            .disabled(isGeneratingTTS)
 
             if ttsReady {
                 VStack(alignment: .leading, spacing: 8) {

@@ -7,20 +7,13 @@ public class APIManager {
 
     private init() {}
 
-    public func createTask(
+    // BƯỚC 1: Tải video lên khởi tạo Project
+    public func uploadVideo(
         serverURL: String,
         videoURL: URL,
-        voiceID: String,
-        genre: String,
-        trimStart: Double,
-        trimEnd: Double,
-        maskRect: MaskRect?,
-        dubVolume: Double,
-        origVolume: Double,
-        cues: [SubtitleCue]?,
-        completion: @escaping (Result<String, Error>) -> Void
+        completion: @escaping (Result<[String: Any], Error>) -> Void
     ) {
-        guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/tasks/create") else {
+        guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/step/upload") else {
             completion(.failure(NSError(domain: "URL", code: -1, userInfo: [NSLocalizedDescriptionKey: "Đường dẫn server không hợp lệ"])))
             return
         }
@@ -33,29 +26,6 @@ public class APIManager {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
         var body = Data()
-
-        func addField(name: String, value: String) {
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
-            body.append("\(value)\r\n".data(using: .utf8)!)
-        }
-
-        addField(name: "voice_id", value: voiceID)
-        addField(name: "genre", value: genre)
-        addField(name: "trim_start", value: String(format: "%.2f", trimStart))
-        addField(name: "trim_end", value: String(format: "%.2f", trimEnd))
-        addField(name: "dub_volume", value: String(format: "%.2f", dubVolume))
-        addField(name: "orig_volume", value: String(format: "%.2f", origVolume))
-
-        if let mask = maskRect, let maskData = try? JSONEncoder().encode(mask), let maskJson = String(data: maskData, encoding: .utf8) {
-            addField(name: "mask_rect", value: maskJson)
-        }
-
-        if let cues = cues, let cuesData = try? JSONEncoder().encode(cues), let cuesJson = String(data: cuesData, encoding: .utf8) {
-            addField(name: "cues", value: cuesJson)
-        }
-
-        // Đính kèm file Video MP4
         if let videoData = try? Data(contentsOf: videoURL) {
             body.append("--\(boundary)\r\n".data(using: .utf8)!)
             body.append("Content-Disposition: form-data; name=\"video\"; filename=\"input.mp4\"\r\n".data(using: .utf8)!)
@@ -63,83 +33,187 @@ public class APIManager {
             body.append(videoData)
             body.append("\r\n".data(using: .utf8)!)
         }
-
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
-        let task = URLSession.shared.uploadTask(with: request, from: body) { data, response, error in
-            if let error = error {
-                completion(.failure(error))
-                return
-            }
+        URLSession.shared.uploadTask(with: request, from: body) { data, _, error in
+            if let error = error { completion(.failure(error)); return }
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let taskId = json["task_id"] as? String else {
-                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Không nhận được Task ID từ máy chủ"])))
+                  let success = json["success"] as? Bool, success else {
+                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Lỗi tải video lên"])))
                 return
             }
-            completion(.success(taskId))
-        }
-        task.resume()
+            completion(.success(json))
+        }.resume()
     }
 
-    public func pollTaskStatus(
+    // BƯỚC 2: Chuyển âm thanh thành SRT (CapCut STT)
+    public func stepSTT(
         serverURL: String,
-        taskId: String,
-        completion: @escaping (Result<TaskStatusResponse, Error>) -> Void
+        projectId: String,
+        sourceLang: String = "zh-CN",
+        completion: @escaping (Result<[SubtitleCue], Error>) -> Void
     ) {
-        guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/tasks/\(taskId)/status") else {
-            return
-        }
+        guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/step/stt") else { return }
 
-        let task = URLSession.shared.dataTask(with: url) { data, response, error in
-            if let error = error {
-                completion(.failure(error))
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body = ["project_id": projectId, "source_lang": sourceLang]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            if let error = error { completion(.failure(error)); return }
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let cuesRaw = json["cues"] as? [[String: Any]],
+                  let cuesData = try? JSONSerialization.data(withJSONObject: cuesRaw),
+                  let cues = try? JSONDecoder().decode([SubtitleCue].self, from: cuesData) else {
+                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Không nhận dạng được câu thoại"])))
                 return
             }
-            guard let data = data else {
-                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Dữ liệu trống"])))
-                return
-            }
-            do {
-                let statusRes = try JSONDecoder().decode(TaskStatusResponse.self, from: data)
-                completion(.success(statusRes))
-            } catch {
-                completion(.failure(error))
-            }
-        }
-        task.resume()
+            completion(.success(cues))
+        }.resume()
     }
 
-    public func downloadResultVideo(
+    // BƯỚC 3: Dịch SRT qua 9Router AI
+    public func stepTranslate(
         serverURL: String,
-        taskId: String,
+        projectId: String,
+        cues: [SubtitleCue],
+        genre: String,
+        completion: @escaping (Result<[SubtitleCue], Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/step/translate") else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        guard let cuesData = try? JSONEncoder().encode(cues),
+              let cuesJson = try? JSONSerialization.jsonObject(with: cuesData) else { return }
+
+        let body: [String: Any] = ["project_id": projectId, "cues": cuesJson, "genre": genre]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            if let error = error { completion(.failure(error)); return }
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let cuesRaw = json["cues"] as? [[String: Any]],
+                  let cuesData = try? JSONSerialization.data(withJSONObject: cuesRaw),
+                  let translatedCues = try? JSONDecoder().decode([SubtitleCue].self, from: cuesData) else {
+                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Lỗi dịch phụ đề qua 9Router"])))
+                return
+            }
+            completion(.success(translatedCues))
+        }.resume()
+    }
+
+    // BƯỚC 4: Chuyển văn bản thành âm thanh (CapCut TTS)
+    public func stepTTS(
+        serverURL: String,
+        projectId: String,
+        cues: [SubtitleCue],
+        voiceId: String,
+        completion: @escaping (Result<Bool, Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/step/tts") else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        guard let cuesData = try? JSONEncoder().encode(cues),
+              let cuesJson = try? JSONSerialization.jsonObject(with: cuesData) else { return }
+
+        let body: [String: Any] = ["project_id": projectId, "cues": cuesJson, "voice_id": voiceId]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            if let error = error { completion(.failure(error)); return }
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let success = json["success"] as? Bool, success else {
+                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Lỗi tạo giọng đọc CapCut"])))
+                return
+            }
+            completion(.success(true))
+        }.resume()
+    }
+
+    // BƯỚC 5 & 6: Ghép vào video & Render xuất file
+    public func stepRender(
+        serverURL: String,
+        projectId: String,
+        cues: [SubtitleCue],
+        maskRect: MaskRect?,
+        logoRect: MaskRect?,
+        dubVolume: Double,
+        origVolume: Double,
+        trimStart: Double,
+        trimEnd: Double,
         completion: @escaping (Result<URL, Error>) -> Void
     ) {
-        guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/tasks/\(taskId)/download") else {
-            return
+        guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/step/render") else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        guard let cuesData = try? JSONEncoder().encode(cues),
+              let cuesJson = try? JSONSerialization.jsonObject(with: cuesData) else { return }
+
+        var body: [String: Any] = [
+            "project_id": projectId,
+            "cues": cuesJson,
+            "dub_volume": dubVolume,
+            "orig_volume": origVolume,
+            "trim_start": trimStart,
+            "trim_end": trimEnd
+        ]
+        if let mask = maskRect, let mData = try? JSONEncoder().encode(mask), let mJson = try? JSONSerialization.jsonObject(with: mData) {
+            body["mask_rect"] = mJson
+        }
+        if let logo = logoRect, let lData = try? JSONEncoder().encode(logo), let lJson = try? JSONSerialization.jsonObject(with: lData) {
+            body["logo_rect"] = lJson
         }
 
-        let downloadTask = URLSession.shared.downloadTask(with: url) { tempURL, response, error in
-            if let error = error {
-                completion(.failure(error))
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
+            if let error = error { completion(.failure(error)); return }
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let downloadUrlPath = json["download_url"] as? String else {
+                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Lỗi render video"])))
                 return
             }
+
+            // Tải file về
+            let fullDownloadURL = "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))\(downloadUrlPath)"
+            self?.downloadFinalFile(from: fullDownloadURL, projectId: projectId, completion: completion)
+        }.resume()
+    }
+
+    private func downloadFinalFile(from urlString: String, projectId: String, completion: @escaping (Result<URL, Error>) -> Void) {
+        guard let url = URL(string: urlString) else { return }
+        URLSession.shared.downloadTask(with: url) { tempURL, _, error in
+            if let error = error { completion(.failure(error)); return }
             guard let tempURL = tempURL else {
-                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Lỗi tải file"])))
+                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Lỗi tải video"])))
                 return
             }
             let outputDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            let destURL = outputDir.appendingPathComponent("final_\(taskId).mp4")
+            let destURL = outputDir.appendingPathComponent("final_\(projectId).mp4")
             try? FileManager.default.removeItem(at: destURL)
-
             do {
                 try FileManager.default.moveItem(at: tempURL, to: destURL)
                 completion(.success(destURL))
             } catch {
                 completion(.failure(error))
             }
-        }
-        downloadTask.resume()
+        }.resume()
     }
 
     public func playTTSPreview(serverURL: String, text: String, voiceID: String) {

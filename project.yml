@@ -1,6 +1,8 @@
 name: TranslateDubApp
 options:
   bundleIdPrefix: com.videotranslator
+  projectFormat: xcode15_0
+  xcodeVersion: "15.4"
 targets:
   TranslateDubApp:
     type: application

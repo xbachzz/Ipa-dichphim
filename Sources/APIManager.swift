@@ -58,6 +58,7 @@ public class APIManager {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 300
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body = ["project_id": projectId, "source_lang": sourceLang]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -88,6 +89,7 @@ public class APIManager {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 300
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         guard let cuesData = try? JSONEncoder().encode(cues),
@@ -122,6 +124,7 @@ public class APIManager {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 300
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         guard let cuesData = try? JSONEncoder().encode(cues),
@@ -135,7 +138,8 @@ public class APIManager {
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let success = json["success"] as? Bool, success else {
-                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Lỗi tạo giọng đọc CapCut"])))
+                let errMsg = (data != nil ? (try? JSONSerialization.jsonObject(with: data!) as? [String: Any])?["error"] as? String : nil) ?? "Lỗi tạo giọng đọc CapCut"
+                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: errMsg])))
                 return
             }
             completion(.success(true))
@@ -159,6 +163,7 @@ public class APIManager {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 600
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         guard let cuesData = try? JSONEncoder().encode(cues),

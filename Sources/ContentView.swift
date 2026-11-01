@@ -2,404 +2,1000 @@ import SwiftUI
 import PhotosUI
 import AVKit
 
+// MARK: - Voice Model
 struct VoiceItem: Identifiable, Hashable {
     let id: String
     let name: String
+    let tag: String
+    let gender: String
+    let iconName: String
 }
 
+// MARK: - Main Studio View
 public struct ContentView: View {
-    // Cấu hình kết nối VPS
     @AppStorage("server_url") private var serverURL: String = "http://103.211.206.176:9005"
-    
+
     // Video State
     @State private var selectedItem: PhotosPickerItem? = nil
     @State private var selectedVideoURL: URL? = nil
     @State private var player: AVPlayer? = nil
+    @State private var isPlaying: Bool = false
+    @State private var currentTime: Double = 0.0
     @State private var videoDuration: Double = 60.0
-    
+    @State private var timeObserverToken: Any? = nil
+
+    // Aspect Ratio & Layout
+    @State private var selectedAspectRatio: String = "9:16"
+
     // Trim State
     @State private var trimStart: Double = 0.0
     @State private var trimEnd: Double = 60.0
-    
-    // Mask Sub/Logo State (Tọa độ tương đối 0.0 - 1.0)
+
+    // Mask Sub/Logo State
     @State private var enableMask: Bool = true
     @State private var maskYRatio: CGFloat = 0.82
     @State private var maskHeightRatio: CGFloat = 0.12
     @State private var maskStyle: String = "box_semi"
-    
+
     // Audio Mixer State
     @State private var dubVolume: Double = 1.0
     @State private var origVolume: Double = 0.12
-    
-    // AI & Voice State
+
+    // Voice & Translation State
     @State private var selectedVoice: String = "BV421_vivn_streaming"
     @State private var selectedGenre: String = "phim_chung"
-    
+
     // Subtitle Editor State
     @State private var cues: [SubtitleCue] = []
     @State private var showSubtitleStudio: Bool = false
-    
+    @State private var searchSubtitleText: String = ""
+
+    // Bottom Navigation Tool Selection
+    @State private var activeToolTab: String = "translate" // translate, edit, sub, mask, audio
+
     // Task Progress State
     @State private var isProcessing: Bool = false
     @State private var currentTaskId: String = ""
     @State private var progressPercent: Int = 0
     @State private var progressStage: String = ""
     @State private var progressMessage: String = ""
-    @State private var timer: Timer? = nil
-    
+    @State private var pollingTimer: Timer? = nil
+
     // Result State
     @State private var outputVideoURL: URL? = nil
     @State private var resultPlayer: AVPlayer? = nil
+    @State private var showResultModal: Bool = false
+    @State private var showSettingsModal: Bool = false
     @State private var showAlert: Bool = false
     @State private var alertMessage: String = ""
 
-    let voices = [
-        VoiceItem(id: "BV421_vivn_streaming", name: "Nam Tri Thức (Review Phim)"),
-        VoiceItem(id: "multi_female_richgirl_uranus_bigtts", name: "Nữ Sang Trọng / Kịch Tính"),
-        VoiceItem(id: "BV001_streaming", name: "Nữ Đọc Truyện / Truyền Cảm"),
-        VoiceItem(id: "BV007_streaming", name: "Nam Trầm Ấm / Thời Sự")
+    // Voice Catalog
+    let voices: [VoiceItem] = [
+        VoiceItem(id: "BV421_vivn_streaming", name: "Nam Tri Thức", tag: "Review Phim / Kể chuyện", gender: "Nam", iconName: "person.crop.circle.badge.checkmark"),
+        VoiceItem(id: "multi_female_richgirl_uranus_bigtts", name: "Nữ Sang Trọng", tag: "Phim Ngôn Tình / Kịch Tính", gender: "Nữ", iconName: "sparkles"),
+        VoiceItem(id: "BV001_streaming", name: "Nữ Truyền Cảm", tag: "Đọc Truyện / Tình Cảm", gender: "Nữ", iconName: "heart.fill"),
+        VoiceItem(id: "BV007_streaming", name: "Nam Trầm Ấm", tag: "Thời Sự / Phóng Sự", gender: "Nam", iconName: "mic.fill")
     ]
 
     let genres = [
-        ("phim_chung", "Đời thường / TikTok"),
-        ("kiem_hiep", "Cổ trang / Kiếm hiệp"),
-        ("tong_tai", "Tổng tài / Ngôn tình"),
-        ("hai_huoc", "Hài hước / Bắt trend")
+        ("phim_chung", "Đời thường / TikTok", "flame.fill"),
+        ("kiem_hiep", "Cổ trang / Kiếm hiệp", "shield.fill"),
+        ("tong_tai", "Tổng tài / Ngôn tình", "crown.fill"),
+        ("hai_huoc", "Hài hước / Dí dỏm", "face.smiling.fill")
     ]
 
     public var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(spacing: 16) {
-                    // PHẦN 1: VIDEO CANVAS & MASK PREVIEW
-                    if let _ = selectedVideoURL {
-                        videoCanvasView
-                            .frame(height: 280)
+        ZStack {
+            Color(hex: "0B0C10").ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // 1. TOP HEADER BAR
+                topNavigationBar
+
+                if selectedVideoURL == nil {
+                    // 2. EMPTY STATE: CHƯA CHỌN VIDEO
+                    emptyStudioState
+                } else {
+                    // 3. PRO EDITOR VIEWPORT & TIMELINE
+                    VStack(spacing: 0) {
+                        // Video Player Viewport with interactive mask
+                        videoCanvasViewport
+                            .frame(maxHeight: UIScreen.main.bounds.height * 0.38)
                             .background(Color.black)
-                            .cornerRadius(12)
-                            .padding(.horizontal)
-                    } else {
-                        emptyVideoPlaceholder
-                            .frame(height: 200)
-                            .padding(.horizontal)
-                    }
 
-                    // PHẦN 2: THANH CÔNG CỤ BIÊN TẬP (TRIM & MASK)
-                    if selectedVideoURL != nil {
-                        editorControlSection
-                            .padding(.horizontal)
-                    }
+                        // Timeline & Playback Bar
+                        timelineControlBar
+                            .padding(.vertical, 8)
+                            .background(Color(hex: "12141C"))
 
-                    // PHẦN 3: GIỌNG ĐỌC & BỘ TRỘN ÂM THANH
-                    audioMixerSection
-                        .padding(.horizontal)
+                        Divider().background(Color(hex: "232733"))
 
-                    // PHẦN 4: SUBTITLE STUDIO
-                    if !cues.isEmpty {
-                        subtitlePreviewCard
-                            .padding(.horizontal)
-                    }
+                        // Bottom Tool Panels
+                        activeToolPanel
+                            .frame(maxHeight: .infinity)
+                            .background(Color(hex: "0F1118"))
 
-                    // PHẦN 5: TIẾN TRÌNH RENDER THỜI GIAN THỰC
-                    if isProcessing {
-                        progressTrackerCard
-                            .padding(.horizontal)
-                    }
-
-                    // NÚT BẮT ĐẦU DỊCH & XUẤT VIDEO
-                    Button(action: startExportTask) {
-                        HStack {
-                            Spacer()
-                            Image(systemName: "wand.and.stars.inverse")
-                            Text(isProcessing ? "Đang xử lý (\(progressPercent)%)..." : "Xuất Video Lồng Tiếng AI")
-                                .fontWeight(.bold)
-                            Spacer()
-                        }
-                        .padding()
-                        .background(isProcessing || selectedVideoURL == nil ? Color.gray : Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(12)
-                    }
-                    .disabled(isProcessing || selectedVideoURL == nil)
-                    .padding(.horizontal)
-
-                    // PHẦN 6: KẾT QUẢ THÀNH PHẨM
-                    if let _ = outputVideoURL, let resPlayer = resultPlayer {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("🎬 Video Hoàn Thiện")
-                                .font(.headline)
-                            VideoPlayer(player: resPlayer)
-                                .frame(height: 240)
-                                .cornerRadius(12)
-                            
-                            Button(action: saveToPhotoLibrary) {
-                                Label("Lưu Video vào Album Ảnh", systemImage: "square.and.arrow.down.fill")
-                                    .frame(maxWidth: .infinity)
-                                    .padding()
-                                    .background(Color.green)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(10)
-                            }
-                        }
-                        .padding()
-                        .background(Color(.systemGray6))
-                        .cornerRadius(14)
-                        .padding(.horizontal)
-                    }
-                }
-                .padding(.vertical)
-            }
-            .navigationTitle("AI Video Editor")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    NavigationLink(destination: serverSettingsView) {
-                        Image(systemName: "gearshape")
+                        // Bottom Tool Dock Bar
+                        bottomToolDock
                     }
                 }
             }
-            .sheet(isPresented: $showSubtitleStudio) {
-                subtitleStudioSheet
+
+            // MODAL TIẾN TRÌNH RENDER XUẤT VIDEO
+            if isProcessing {
+                renderProgressOverlay
             }
-            .alert(isPresented: $showAlert) {
-                Alert(title: Text("Thông báo"), message: Text(alertMessage), dismissButton: .default(Text("OK")))
+
+            // MODAL KẾT QUẢ VIDEO HOÀN THIỆN
+            if showResultModal, let _ = outputVideoURL {
+                resultVideoModal
+            }
+        }
+        .preferredColorScheme(.dark)
+        .sheet(isPresented: $showSubtitleStudio) {
+            subtitleStudioView
+        }
+        .sheet(isPresented: $showSettingsModal) {
+            serverSettingsModal
+        }
+        .alert(isPresented: $showAlert) {
+            Alert(title: Text("Thông Báo"), message: Text(alertMessage), dismissButton: .default(Text("Đóng")))
+        }
+    }
+
+    // MARK: - Top Navigation Bar
+    var topNavigationBar: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "wand.and.stars")
+                    .foregroundColor(Color(hex: "00ADB5"))
+                    .font(.system(size: 18, weight: .bold))
+                Text("DUB STUDIO")
+                    .font(.system(size: 16, weight: .black, design: .rounded))
+                    .foregroundColor(.white)
+                Text("AI")
+                    .font(.system(size: 10, weight: .bold))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color(hex: "00ADB5"))
+                    .foregroundColor(.black)
+                    .cornerRadius(4)
+            }
+
+            Spacer()
+
+            if selectedVideoURL != nil {
+                Button(action: startExportTask) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "square.and.arrow.up.fill")
+                            .font(.system(size: 13, weight: .bold))
+                        Text("Xuất Video")
+                            .font(.system(size: 13, weight: .bold))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(
+                        LinearGradient(colors: [Color(hex: "00ADB5"), Color(hex: "3B82F6")], startPoint: .leading, endPoint: .trailing)
+                    )
+                    .foregroundColor(.white)
+                    .cornerRadius(20)
+                    .shadow(color: Color(hex: "00ADB5").opacity(0.4), radius: 6, y: 2)
+                }
+                .disabled(isProcessing)
+            }
+
+            Button(action: { showSettingsModal = true }) {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 17))
+                    .foregroundColor(Color(hex: "8D99AE"))
+                    .padding(6)
+                    .background(Color(hex: "1E232F"))
+                    .clipShape(Circle())
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color(hex: "12141C"))
+        .overlay(Rectangle().frame(height: 1).foregroundColor(Color(hex: "232733")), alignment: .bottom)
+    }
+
+    // MARK: - Empty State (Khi chưa chọn Video)
+    var emptyStudioState: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                Spacer(minLength: 20)
+
+                // Big Upload Card
+                PhotosPicker(selection: $selectedItem, matching: .videos) {
+                    VStack(spacing: 16) {
+                        ZStack {
+                            Circle()
+                                .fill(LinearGradient(colors: [Color(hex: "00ADB5").opacity(0.2), Color(hex: "3B82F6").opacity(0.2)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .frame(width: 90, height: 90)
+                            Image(systemName: "video.badge.plus")
+                                .font(.system(size: 42, weight: .medium))
+                                .foregroundColor(Color(hex: "00ADB5"))
+                        }
+
+                        VStack(spacing: 6) {
+                            Text("Bắt đầu Dự Án Mới")
+                                .font(.system(size: 19, weight: .bold))
+                                .foregroundColor(.white)
+                            Text("Chọn video từ iPhone để tự động Dịch, Lồng tiếng & Biên tập")
+                                .font(.system(size: 13))
+                                .foregroundColor(Color(hex: "8D99AE"))
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 20)
+                        }
+
+                        HStack(spacing: 8) {
+                            Image(systemName: "photo.on.rectangle")
+                            Text("Mở Thư Viện Ảnh")
+                        }
+                        .font(.system(size: 14, weight: .semibold))
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 11)
+                        .background(Color(hex: "00ADB5"))
+                        .foregroundColor(.black)
+                        .cornerRadius(25)
+                        .shadow(color: Color(hex: "00ADB5").opacity(0.3), radius: 8, y: 3)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 32)
+                    .background(Color(hex: "141824"))
+                    .cornerRadius(20)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [7]))
+                            .foregroundColor(Color(hex: "00ADB5").opacity(0.4))
+                    )
+                }
+                .onChange(of: selectedItem) { newItem in
+                    loadSelectedVideo(newItem)
+                }
+                .padding(.horizontal, 20)
+
+                // Feature Highlights
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("TÍNH NĂNG NỔI BẬT")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Color(hex: "8D99AE"))
+                        .tracking(1.2)
+                        .padding(.horizontal, 4)
+
+                    featureCard(icon: "waveform.badge.mic", title: "CapCut Cloud STT", desc: "Nhận diện mốc thời gian chuẩn xác từng mili-giây từ giọng nói gốc.")
+                    featureCard(icon: "bubble.left.and.bubble.right.fill", title: "9Router AI Dịch Thuật", desc: "Dịch chuẩn ngữ cảnh điện ảnh, khống chế số lượng âm tiết để vừa khít nhịp đọc.")
+                    featureCard(icon: "sparkles.tv", title: "Lồng Tiếng CapCut SAMI", desc: "Giọng đọc AI cảm xúc cao, tự động đồng bộ khẩu hình và dìm âm gốc thông minh.")
+                    featureCard(icon: "scissors.badge.ellipsis", title: "Biên Tập & Che Sub Gốc", desc: "Kéo thả hộp che phụ đề gốc, cắt gọt video với giao diện Timeline mượt mà.")
+                }
+                .padding(.horizontal, 20)
+
+                Spacer(minLength: 30)
             }
         }
     }
 
-    // Giao diện khi chưa chọn video
-    var emptyVideoPlaceholder: some View {
-        PhotosPicker(selection: $selectedItem, matching: .videos) {
-            VStack(spacing: 12) {
-                Image(systemName: "video.badge.plus")
-                    .font(.system(size: 40))
-                    .foregroundColor(.blue)
-                Text("Nhấn để Chọn Video cần Dịch & Biên tập")
-                    .font(.headline)
-                Text("Hỗ trợ video MP4, MOV từ Album ảnh")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+    func featureCard(icon: String, title: String, desc: String) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 20))
+                .foregroundColor(Color(hex: "00ADB5"))
+                .frame(width: 42, height: 42)
+                .background(Color(hex: "1E2436"))
+                .cornerRadius(12)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white)
+                Text(desc)
+                    .font(.system(size: 12))
+                    .foregroundColor(Color(hex: "8D99AE"))
+                    .lineLimit(2)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(.systemGray6))
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
-                    .foregroundColor(.blue.opacity(0.5))
-            )
+            Spacer()
         }
-        .onChange(of: selectedItem) { newItem in
-            loadSelectedVideo(newItem)
-        }
+        .padding(14)
+        .background(Color(hex: "141824"))
+        .cornerRadius(14)
     }
 
-    // Màn hình Canvas tương tác (Video + Hộp che sub)
-    var videoCanvasView: some View {
+    // MARK: - Video Canvas Viewport
+    var videoCanvasViewport: some View {
         GeometryReader { geo in
-            ZStack(alignment: .topLeading) {
+            ZStack(alignment: .center) {
+                Color.black
+
                 if let p = player {
                     VideoPlayer(player: p)
-                        .disabled(true)
+                        .aspectRatio(aspectRatioValue, contentMode: .fit)
+                        .frame(maxWidth: geo.size.width, maxHeight: geo.size.height)
                 }
 
-                // Vùng hộp che sub có thể kéo thả
+                // Interactive Mask Box overlay
                 if enableMask {
                     let boxH = geo.size.height * maskHeightRatio
                     let boxY = geo.size.height * maskYRatio
 
                     ZStack {
                         Rectangle()
-                            .fill(maskStyle == "box_black" ? Color.black : Color.black.opacity(0.7))
+                            .fill(maskStyle == "box_black" ? Color.black : Color.black.opacity(0.72))
                             .overlay(
-                                Text("Vùng che Sub / Logo")
-                                    .font(.caption2)
-                                    .foregroundColor(.white.opacity(0.8))
+                                HStack {
+                                    Image(systemName: "eye.slash.fill")
+                                        .font(.system(size: 10))
+                                    Text("Vùng Che Phụ Đề Gốc")
+                                        .font(.system(size: 11, weight: .bold))
+                                }
+                                .foregroundColor(.white.opacity(0.85))
                             )
-                            .border(Color.red, width: 1.5)
+                            .border(Color(hex: "00ADB5"), width: 1.5)
                     }
-                    .frame(width: geo.size.width * 0.96, height: boxH)
-                    .offset(x: geo.size.width * 0.02, y: boxY)
+                    .frame(width: geo.size.width * 0.94, height: boxH)
+                    .position(x: geo.size.width / 2, y: boxY + boxH / 2)
                     .gesture(
                         DragGesture()
                             .onChanged { val in
-                                let newY = val.location.y / geo.size.height
-                                maskYRatio = max(0.0, min(0.9, newY))
+                                let newY = (val.location.y - boxH / 2) / geo.size.height
+                                maskYRatio = max(0.05, min(0.90, newY))
                             }
                     )
                 }
-            }
-        }
-    }
 
-    // Bộ điều khiển Cắt (Trim) và Che Sub
-    var editorControlSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("✂️ Biên Tập Video & Che Sub")
-                .font(.headline)
+                // Floating Play/Pause Button on tap
+                Button(action: togglePlayPause) {
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 22))
+                        .foregroundColor(.white)
+                        .padding(14)
+                        .background(Color.black.opacity(0.55))
+                        .clipShape(Circle())
+                }
+                .opacity(isPlaying ? 0.0 : 0.85)
 
-            // Cắt đoạn (Trim)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Cắt đoạn:")
-                        .font(.subheadline)
+                // Timecode pill
+                VStack {
+                    HStack {
+                        Text(formatSeconds(currentTime) + " / " + formatSeconds(videoDuration))
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.black.opacity(0.65))
+                            .foregroundColor(.white)
+                            .cornerRadius(6)
+                        Spacer()
+                    }
+                    .padding(8)
                     Spacer()
-                    Text(String(format: "%.1fs - %.1fs", trimStart, trimEnd))
-                        .font(.caption)
-                        .foregroundColor(.blue)
                 }
-                HStack {
-                    Slider(value: $trimStart, in: 0...max(1.0, trimEnd - 1.0))
-                    Slider(value: $trimEnd, in: min(videoDuration, trimStart + 1.0)...videoDuration)
-                }
-            }
-
-            // Tùy chỉnh vùng che phụ đề gốc
-            Toggle("Bật vùng che phụ đề cũ / Logo", isOn: $enableMask)
-                .font(.subheadline)
-
-            if enableMask {
-                Picker("Kiểu che", selection: $maskStyle) {
-                    Text("Hộp mờ đen").tag("box_semi")
-                    Text("Đen tuyền").tag("box_black")
-                    Text("Xóa mờ (Delogo)").tag("delogo")
-                }
-                .pickerStyle(SegmentedPickerStyle())
             }
         }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
     }
 
-    // Bộ trộn âm thanh & Giọng đọc
-    var audioMixerSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("🎙️ Giọng Đọc & Âm Thanh")
-                .font(.headline)
+    var aspectRatioValue: CGFloat {
+        switch selectedAspectRatio {
+        case "9:16": return 9.0 / 16.0
+        case "16:9": return 16.0 / 9.0
+        case "1:1": return 1.0
+        default: return 9.0 / 16.0
+        }
+    }
 
-            Picker("Giọng đọc (CapCut TTS)", selection: $selectedVoice) {
-                ForEach(voices) { v in
-                    Text(v.name).tag(v.id)
+    // MARK: - Timeline Control Bar
+    var timelineControlBar: some View {
+        VStack(spacing: 6) {
+            // Ruler & Track representation
+            HStack(spacing: 12) {
+                Button(action: { seekRelative(-5) }) {
+                    Image(systemName: "gobackward.5")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+
+                // Interactive Scrubber Slider
+                Slider(
+                    value: Binding(
+                        get: { currentTime },
+                        set: { newTime in
+                            seekToTime(newTime)
+                        }
+                    ),
+                    in: 0...max(1.0, videoDuration)
+                )
+                .accentColor(Color(hex: "00ADB5"))
+
+                Button(action: { seekRelative(5) }) {
+                    Image(systemName: "goforward.5")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white)
                 }
             }
+            .padding(.horizontal, 16)
 
-            Picker("Văn phong dịch (9Router)", selection: $selectedGenre) {
-                ForEach(genres, id: \.0) { g in
-                    Text(g.1).tag(g.0)
-                }
-            }
-
+            // Filmstrip / Subtitle Strip Indicator
             HStack {
-                Text("Âm lượng lồng tiếng:")
-                    .font(.caption)
-                Slider(value: $dubVolume, in: 0.2...2.0)
-                Text("\(Int(dubVolume * 100))%")
-                    .font(.caption)
-            }
-
-            HStack {
-                Text("Âm lượng video gốc:")
-                    .font(.caption)
-                Slider(value: $origVolume, in: 0.0...0.5)
-                Text("\(Int(origVolume * 100))%")
-                    .font(.caption)
-            }
-        }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
-    }
-
-    // Xem trước phụ đề
-    var subtitlePreviewCard: some View {
-        HStack {
-            VStack(alignment: .leading) {
-                Text("📝 Đã nhận diện \(cues.count) câu thoại")
-                    .font(.subheadline).bold()
-                Text("Chạm để chỉnh sửa lời thoại tiếng Việt trước khi render.")
-                    .font(.caption).foregroundColor(.secondary)
-            }
-            Spacer()
-            Button("Mở Studio") {
-                showSubtitleStudio = true
-            }
-            .buttonStyle(.borderedProminent)
-        }
-        .padding()
-        .background(Color.blue.opacity(0.1))
-        .cornerRadius(12)
-    }
-
-    // Thẻ theo dõi tiến trình %
-    var progressTrackerCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                ProgressView()
-                    .padding(.trailing, 4)
-                Text(progressStage)
-                    .font(.subheadline).bold()
-                Spacer()
-                Text("\(progressPercent)%")
-                    .font(.subheadline).bold().foregroundColor(.blue)
-            }
-            ProgressView(value: Double(progressPercent), total: 100)
-                .accentColor(.blue)
-            Text(progressMessage)
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
-    }
-
-    // Modal Studio chỉnh sửa phụ đề
-    var subtitleStudioSheet: some View {
-        NavigationView {
-            List {
-                ForEach($cues) { $cue in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("[\(cue.timeFormatted)]")
-                                .font(.caption).bold().foregroundColor(.blue)
+                Rectangle()
+                    .fill(
+                        LinearGradient(colors: [Color(hex: "1F2833"), Color(hex: "2D3748")], startPoint: .leading, endPoint: .trailing)
+                    )
+                    .frame(height: 18)
+                    .cornerRadius(4)
+                    .overlay(
+                        HStack(spacing: 4) {
+                            Text("🎬 Track Video (Cắt: \(String(format: "%.1fs", trimStart)) - \(String(format: "%.1fs", trimEnd)))")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundColor(Color(hex: "00ADB5"))
+                                .padding(.leading, 6)
                             Spacer()
-                            Button(action: {
-                                APIManager.shared.playTTSPreview(serverURL: serverURL, text: cue.translated_text, voiceID: selectedVoice)
-                            }) {
-                                Image(systemName: "speaker.wave.2.fill")
-                                    .foregroundColor(.green)
+                        }
+                    )
+            }
+            .padding(.horizontal, 16)
+        }
+    }
+
+    // MARK: - Bottom Tool Panels
+    var activeToolPanel: some View {
+        ScrollView {
+            VStack(spacing: 14) {
+                switch activeToolTab {
+                case "translate":
+                    voiceAndGenrePanel
+                case "edit":
+                    trimAndAspectPanel
+                case "sub":
+                    subtitleToolsPanel
+                case "mask":
+                    maskSettingsPanel
+                case "audio":
+                    audioMixerPanel
+                default:
+                    voiceAndGenrePanel
+                }
+            }
+            .padding(16)
+        }
+    }
+
+    // Panel 1: Giọng đọc & Dịch thuật
+    var voiceAndGenrePanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("GIỌNG ĐỌC CAPCUT TTS")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Color(hex: "8D99AE"))
+                Spacer()
+                Text("Bản quyền ByteDance SAMI")
+                    .font(.system(size: 10))
+                    .foregroundColor(Color(hex: "00ADB5"))
+            }
+
+            // Voice Selector Cards
+            VStack(spacing: 8) {
+                ForEach(voices) { v in
+                    Button(action: { selectedVoice = v.id }) {
+                        HStack(spacing: 12) {
+                            Image(systemName: v.iconName)
+                                .font(.system(size: 18))
+                                .foregroundColor(selectedVoice == v.id ? Color(hex: "00ADB5") : .white)
+                                .frame(width: 38, height: 38)
+                                .background(selectedVoice == v.id ? Color(hex: "00ADB5").opacity(0.18) : Color(hex: "1A202C"))
+                                .clipShape(Circle())
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(v.name)
+                                        .font(.system(size: 14, weight: .bold))
+                                        .foregroundColor(.white)
+                                    Text(v.gender)
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 1)
+                                        .background(v.gender == "Nam" ? Color.blue.opacity(0.25) : Color.pink.opacity(0.25))
+                                        .foregroundColor(v.gender == "Nam" ? .blue : .pink)
+                                        .cornerRadius(4)
+                                }
+                                Text(v.tag)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(Color(hex: "8D99AE"))
+                            }
+
+                            Spacer()
+
+                            if selectedVoice == v.id {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(Color(hex: "00ADB5"))
+                                    .font(.system(size: 18))
                             }
                         }
-                        Text(cue.original_text)
-                            .font(.caption).foregroundColor(.secondary)
-                        TextField("Câu dịch tiếng Việt", text: $cue.translated_text)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .padding(12)
+                        .background(selectedVoice == v.id ? Color(hex: "16222F") : Color(hex: "141824"))
+                        .cornerRadius(12)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(selectedVoice == v.id ? Color(hex: "00ADB5") : Color.clear, lineWidth: 1.5)
+                        )
                     }
-                    .padding(.vertical, 4)
                 }
             }
-            .navigationTitle("Studio Biên Tập Phụ Đề")
+
+            // Genre Selector
+            Text("VĂN PHONG DỊCH THUẬT (9ROUTER AI)")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(Color(hex: "8D99AE"))
+                .padding(.top, 4)
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                ForEach(genres, id: \.0) { g in
+                    Button(action: { selectedGenre = g.0 }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: g.2)
+                                .font(.system(size: 13))
+                                .foregroundColor(selectedGenre == g.0 ? Color(hex: "00ADB5") : .white)
+                            Text(g.1)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(selectedGenre == g.0 ? .white : Color(hex: "8D99AE"))
+                            Spacer()
+                        }
+                        .padding(10)
+                        .background(selectedGenre == g.0 ? Color(hex: "1A2B38") : Color(hex: "141824"))
+                        .cornerRadius(10)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(selectedGenre == g.0 ? Color(hex: "00ADB5") : Color.clear, lineWidth: 1.2)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // Panel 2: Biên tập Cắt & Tỷ lệ
+    var trimAndAspectPanel: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("TỶ LỆ KHUNG HÌNH (ASPECT RATIO)")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(Color(hex: "8D99AE"))
+
+            HStack(spacing: 10) {
+                ForEach(["9:16", "16:9", "1:1"], id: \.self) { ratio in
+                    Button(action: { selectedAspectRatio = ratio }) {
+                        VStack(spacing: 4) {
+                            Text(ratio)
+                                .font(.system(size: 13, weight: .bold))
+                            Text(ratio == "9:16" ? "TikTok" : (ratio == "16:9" ? "YouTube" : "Feed"))
+                                .font(.system(size: 10))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(selectedAspectRatio == ratio ? Color(hex: "00ADB5") : Color(hex: "141824"))
+                        .foregroundColor(selectedAspectRatio == ratio ? .black : .white)
+                        .cornerRadius(10)
+                    }
+                }
+            }
+
+            Text("CẮT ĐOẠN VIDEO (TRIM)")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(Color(hex: "8D99AE"))
+                .padding(.top, 6)
+
+            VStack(spacing: 10) {
+                HStack {
+                    Text("Bắt đầu:")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color(hex: "8D99AE"))
+                    Spacer()
+                    Text(formatSeconds(trimStart))
+                        .font(.system(size: 13, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(hex: "00ADB5"))
+                }
+                Slider(value: $trimStart, in: 0...max(1.0, trimEnd - 1.0))
+                    .accentColor(Color(hex: "00ADB5"))
+
+                HStack {
+                    Text("Kết thúc:")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color(hex: "8D99AE"))
+                    Spacer()
+                    Text(formatSeconds(trimEnd))
+                        .font(.system(size: 13, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(hex: "00ADB5"))
+                }
+                Slider(value: $trimEnd, in: min(videoDuration, trimStart + 1.0)...videoDuration)
+                    .accentColor(Color(hex: "00ADB5"))
+            }
+            .padding(14)
+            .background(Color(hex: "141824"))
+            .cornerRadius(12)
+        }
+    }
+
+    // Panel 3: Phụ Đề
+    var subtitleToolsPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("STUDIO PHỤ ĐỀ SONG NGỮ")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Color(hex: "8D99AE"))
+                Spacer()
+                Text("\(cues.count) câu")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Color(hex: "00ADB5"))
+            }
+
+            Button(action: { showSubtitleStudio = true }) {
+                HStack(spacing: 12) {
+                    Image(systemName: "pencil.and.list.clipboard")
+                        .font(.system(size: 20))
+                        .foregroundColor(Color(hex: "00ADB5"))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Mở Bảng Biên Soạn Phụ Đề")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.white)
+                        Text("Xem và chỉnh sửa trực tiếp từng câu dịch tiếng Việt.")
+                            .font(.system(size: 11))
+                            .foregroundColor(Color(hex: "8D99AE"))
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(Color(hex: "8D99AE"))
+                }
+                .padding(14)
+                .background(Color(hex: "141824"))
+                .cornerRadius(12)
+            }
+
+            if cues.isEmpty {
+                HStack(spacing: 10) {
+                    Image(systemName: "info.circle")
+                        .foregroundColor(Color(hex: "00ADB5"))
+                    Text("Khi bấm 'Xuất Video', hệ thống sẽ tự động quét STT CapCut và gửi vào bảng này.")
+                        .font(.system(size: 12))
+                        .foregroundColor(Color(hex: "8D99AE"))
+                }
+                .padding(12)
+                .background(Color(hex: "141824").opacity(0.6))
+                .cornerRadius(10)
+            }
+        }
+    }
+
+    // Panel 4: Che Phụ Đề / Logo
+    var maskSettingsPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Toggle(isOn: $enableMask) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Bật Vùng Che Phụ Đề Gốc")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                    Text("Hiển thị hộp che để phủ kín sub tiếng Trung/Anh gốc.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color(hex: "8D99AE"))
+                }
+            }
+            .padding(14)
+            .background(Color(hex: "141824"))
+            .cornerRadius(12)
+
+            if enableMask {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("KIỂU VÙNG CHE")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Color(hex: "8D99AE"))
+
+                    Picker("Kiểu che", selection: $maskStyle) {
+                        Text("Hộp Mờ Đen").tag("box_semi")
+                        Text("Đen Tuyền").tag("box_black")
+                        Text("Xóa Logo (Delogo)").tag("delogo")
+                    }
+                    .pickerStyle(SegmentedPickerStyle())
+
+                    Text("VỊ TRÍ CHIỀU DỌC (Y-OFFSET)")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Color(hex: "8D99AE"))
+                        .padding(.top, 4)
+
+                    Slider(value: Binding(get: { Double(maskYRatio) }, set: { maskYRatio = CGFloat($0) }), in: 0.1...0.9)
+                        .accentColor(Color(hex: "00ADB5"))
+
+                    Text("Bạn cũng có thể chạm và kéo trực tiếp hộp đỏ trên màn hình video để căn chỉnh.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color(hex: "00ADB5"))
+                }
+                .padding(14)
+                .background(Color(hex: "141824"))
+                .cornerRadius(12)
+            }
+        }
+    }
+
+    // Panel 5: Trộn Âm Thanh
+    var audioMixerPanel: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Label("Âm Lượng Giọng Lồng Tiếng (AI)", systemImage: "mic.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                    Spacer()
+                    Text("\(Int(dubVolume * 100))%")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(Color(hex: "00ADB5"))
+                }
+                Slider(value: $dubVolume, in: 0.2...2.0)
+                    .accentColor(Color(hex: "00ADB5"))
+            }
+            .padding(14)
+            .background(Color(hex: "141824"))
+            .cornerRadius(12)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Label("Dìm Âm Thanh Video Gốc (Ducking)", systemImage: "speaker.wave.1.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                    Spacer()
+                    Text("\(Int(origVolume * 100))%")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(Color(hex: "00ADB5"))
+                }
+                Slider(value: $origVolume, in: 0.0...0.5)
+                    .accentColor(Color(hex: "00ADB5"))
+                Text("Mức 10% - 15% là tiêu chuẩn vàng để giữ nhạc nền phim và làm nổi bật giọng lồng tiếng.")
+                    .font(.system(size: 11))
+                    .foregroundColor(Color(hex: "8D99AE"))
+            }
+            .padding(14)
+            .background(Color(hex: "141824"))
+            .cornerRadius(12)
+        }
+    }
+
+    // MARK: - Bottom Tool Dock Bar
+    var bottomToolDock: some View {
+        HStack(spacing: 0) {
+            toolDockButton(id: "translate", title: "Lồng Tiếng", icon: "waveform.and.mic")
+            toolDockButton(id: "edit", title: "Biên Tập", icon: "scissors")
+            toolDockButton(id: "sub", title: "Phụ Đề", icon: "captions.bubble.fill")
+            toolDockButton(id: "mask", title: "Che Sub", icon: "square.dashed")
+            toolDockButton(id: "audio", title: "Âm Thanh", icon: "slider.vertical.3")
+        }
+        .padding(.vertical, 8)
+        .background(Color(hex: "12141C"))
+        .overlay(Rectangle().frame(height: 1).foregroundColor(Color(hex: "232733")), alignment: .top)
+    }
+
+    func toolDockButton(id: String, title: String, icon: String) -> some View {
+        Button(action: { activeToolTab = id }) {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: activeToolTab == id ? .bold : .regular))
+                    .foregroundColor(activeToolTab == id ? Color(hex: "00ADB5") : Color(hex: "8D99AE"))
+                Text(title)
+                    .font(.system(size: 10, weight: activeToolTab == id ? .bold : .medium))
+                    .foregroundColor(activeToolTab == id ? .white : Color(hex: "8D99AE"))
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    // MARK: - Modal Studio Chỉnh Sửa Phụ Đề
+    var subtitleStudioView: some View {
+        NavigationView {
+            ZStack {
+                Color(hex: "0B0C10").ignoresSafeArea()
+
+                VStack(spacing: 0) {
+                    if cues.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: "text.bubble")
+                                .font(.system(size: 40))
+                                .foregroundColor(Color(hex: "00ADB5"))
+                            Text("Chưa Có Dữ Liệu Phụ Đề")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            Text("Khi xuất video, câu thoại sẽ tự động xuất hiện tại đây để bạn chỉnh sửa.")
+                                .font(.caption)
+                                .foregroundColor(Color(hex: "8D99AE"))
+                        }
+                        .frame(maxHeight: .infinity)
+                    } else {
+                        List {
+                            ForEach($cues) { $cue in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text("[\(cue.timeFormatted)]")
+                                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                            .foregroundColor(Color(hex: "00ADB5"))
+                                        Spacer()
+                                        Button(action: {
+                                            APIManager.shared.playTTSPreview(serverURL: serverURL, text: cue.translated_text, voiceID: selectedVoice)
+                                        }) {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: "speaker.wave.2.fill")
+                                                Text("Nghe thử")
+                                            }
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(Color(hex: "00ADB5"))
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 4)
+                                            .background(Color(hex: "00ADB5").opacity(0.15))
+                                            .cornerRadius(6)
+                                        }
+                                    }
+
+                                    Text(cue.original_text)
+                                        .font(.system(size: 12))
+                                        .foregroundColor(Color(hex: "8D99AE"))
+
+                                    TextField("Câu dịch tiếng Việt", text: $cue.translated_text)
+                                        .font(.system(size: 13, weight: .medium))
+                                        .padding(8)
+                                        .background(Color(hex: "1F2433"))
+                                        .cornerRadius(8)
+                                        .foregroundColor(.white)
+                                }
+                                .padding(.vertical, 4)
+                                .listRowBackground(Color(hex: "141824"))
+                            }
+                        }
+                        .listStyle(PlainListStyle())
+                    }
+                }
+            }
+            .navigationTitle("Studio Phụ Đề")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Xong") { showSubtitleStudio = false }
+                    Button("Hoàn Tất") { showSubtitleStudio = false }
+                        .foregroundColor(Color(hex: "00ADB5"))
+                        .font(.system(size: 14, weight: .bold))
                 }
             }
         }
     }
 
-    // Cài đặt địa chỉ Server
-    var serverSettingsView: some View {
-        Form {
-            Section(header: Text("Địa chỉ VPS")) {
-                TextField("Server URL", text: $serverURL)
-                    .autocapitalization(.none)
-                    .disableAutocorrection(true)
+    // MARK: - Modal Cài Đặt Server
+    var serverSettingsModal: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("ĐỊA CHỈ MÁY CHỦ VPS")) {
+                    TextField("Server URL", text: $serverURL)
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                }
+                Section(header: Text("THÔNG TIN DỊCH VỤ")) {
+                    HStack {
+                        Text("Trạng thái")
+                        Spacer()
+                        Text("Hoạt động")
+                            .foregroundColor(.green)
+                    }
+                    HStack {
+                        Text("CapCut Engine")
+                        Spacer()
+                        Text("ByteDance SAMI")
+                            .foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Text("Dịch thuật AI")
+                        Spacer()
+                        Text("9Router Local")
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("Cấu Hình")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Lưu") { showSettingsModal = false }
+                }
             }
         }
-        .navigationTitle("Cài Đặt")
     }
 
-    // Tải Video vào bộ nhớ tạm
+    // MARK: - Overlay Tiến Trình Xuất Video
+    var renderProgressOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.85).ignoresSafeArea()
+
+            VStack(spacing: 24) {
+                ZStack {
+                    Circle()
+                        .stroke(Color(hex: "1F2833"), lineWidth: 8)
+                        .frame(width: 110, height: 110)
+
+                    Circle()
+                        .trim(from: 0.0, to: CGFloat(progressPercent) / 100.0)
+                        .stroke(
+                            LinearGradient(colors: [Color(hex: "00ADB5"), Color(hex: "3B82F6")], startPoint: .topLeading, endPoint: .bottomTrailing),
+                            style: StrokeStyle(lineWidth: 8, lineCap: .round)
+                        )
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 110, height: 110)
+
+                    Text("\(progressPercent)%")
+                        .font(.system(size: 26, weight: .black, design: .rounded))
+                        .foregroundColor(.white)
+                }
+
+                VStack(spacing: 8) {
+                    Text(progressStage)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.white)
+                    Text(progressMessage)
+                        .font(.system(size: 12))
+                        .foregroundColor(Color(hex: "8D99AE"))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 30)
+                }
+
+                HStack(spacing: 6) {
+                    Circle().fill(progressPercent >= 20 ? Color(hex: "00ADB5") : Color.gray).frame(width: 8, height: 8)
+                    Circle().fill(progressPercent >= 50 ? Color(hex: "00ADB5") : Color.gray).frame(width: 8, height: 8)
+                    Circle().fill(progressPercent >= 75 ? Color(hex: "00ADB5") : Color.gray).frame(width: 8, height: 8)
+                    Circle().fill(progressPercent >= 95 ? Color(hex: "00ADB5") : Color.gray).frame(width: 8, height: 8)
+                }
+            }
+            .padding(32)
+            .background(Color(hex: "141824"))
+            .cornerRadius(24)
+            .shadow(color: Color.black.opacity(0.6), radius: 20)
+            .padding(.horizontal, 36)
+        }
+    }
+
+    // MARK: - Modal Video Thành Phẩm
+    var resultVideoModal: some View {
+        ZStack {
+            Color.black.opacity(0.92).ignoresSafeArea()
+
+            VStack(spacing: 16) {
+                HStack {
+                    Text("🎬 VIDEO HOÀN THIỆN")
+                        .font(.system(size: 16, weight: .black))
+                        .foregroundColor(.white)
+                    Spacer()
+                    Button(action: { showResultModal = false }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 22))
+                            .foregroundColor(.gray)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+
+                if let p = resultPlayer {
+                    VideoPlayer(player: p)
+                        .frame(height: UIScreen.main.bounds.height * 0.55)
+                        .cornerRadius(16)
+                        .padding(.horizontal, 16)
+                }
+
+                Button(action: saveToPhotoLibrary) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "square.and.arrow.down.fill")
+                        Text("Lưu Video vào Thư Viện Ảnh")
+                    }
+                    .font(.system(size: 15, weight: .bold))
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color(hex: "00ADB5"))
+                    .foregroundColor(.black)
+                    .cornerRadius(14)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 16)
+            }
+            .background(Color(hex: "12141C"))
+            .cornerRadius(24)
+            .padding(.horizontal, 16)
+        }
+    }
+
+    // MARK: - Helpers & Player Controls
     func loadSelectedVideo(_ item: PhotosPickerItem?) {
         Task {
             if let data = try? await item?.loadTransferable(type: Data.self) {
@@ -407,7 +1003,10 @@ public struct ContentView: View {
                 try? data.write(to: tempURL)
                 DispatchQueue.main.async {
                     selectedVideoURL = tempURL
-                    player = AVPlayer(url: tempURL)
+                    let newPlayer = AVPlayer(url: tempURL)
+                    player = newPlayer
+                    setupTimeObserver(newPlayer)
+
                     let asset = AVAsset(url: tempURL)
                     Task {
                         if let dur = try? await asset.load(.duration) {
@@ -424,15 +1023,53 @@ public struct ContentView: View {
         }
     }
 
-    // Bắt đầu quy trình biên tập và xuất video
+    func setupTimeObserver(_ p: AVPlayer) {
+        if let token = timeObserverToken {
+            player?.removeTimeObserver(token)
+            timeObserverToken = nil
+        }
+        let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
+        timeObserverToken = p.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
+            currentTime = CMTimeGetSeconds(time)
+        }
+    }
+
+    func togglePlayPause() {
+        guard let p = player else { return }
+        if isPlaying {
+            p.pause()
+            isPlaying = false
+        } else {
+            p.play()
+            isPlaying = true
+        }
+    }
+
+    func seekToTime(_ sec: Double) {
+        let cmTime = CMTime(seconds: sec, preferredTimescale: 600)
+        player?.seek(to: cmTime, toleranceBefore: .zero, toleranceAfter: .zero)
+        currentTime = sec
+    }
+
+    func seekRelative(_ delta: Double) {
+        let target = max(0.0, min(videoDuration, currentTime + delta))
+        seekToTime(target)
+    }
+
+    func formatSeconds(_ sec: Double) -> String {
+        let s = Int(sec)
+        return String(format: "%02d:%02d", s / 60, s % 60)
+    }
+
+    // Bắt đầu Render Task
     func startExportTask() {
         guard let vidURL = selectedVideoURL else { return }
         isProcessing = true
         progressPercent = 5
-        progressStage = "Đang tải video lên VPS"
-        progressMessage = "Đang chuẩn bị gửi file đến máy chủ..."
+        progressStage = "Đang gửi dữ liệu lên VPS"
+        progressMessage = "Đang tải video và cấu hình biên tập đến máy chủ..."
 
-        let mask = enableMask ? MaskRect(x: 0.02, y: Double(maskYRatio), w: 0.96, h: Double(maskHeightRatio), style: maskStyle) : nil
+        let mask = enableMask ? MaskRect(x: 0.03, y: Double(maskYRatio), w: 0.94, h: Double(maskHeightRatio), style: maskStyle) : nil
 
         APIManager.shared.createTask(
             serverURL: serverURL,
@@ -460,10 +1097,9 @@ public struct ContentView: View {
         }
     }
 
-    // Vòng lặp lấy % tiến trình
     func startPollingProgress() {
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in
+        pollingTimer?.invalidate()
+        pollingTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in
             APIManager.shared.pollTaskStatus(serverURL: serverURL, taskId: currentTaskId) { res in
                 DispatchQueue.main.async {
                     switch res {
@@ -477,12 +1113,12 @@ public struct ContentView: View {
                         }
 
                         if status.status == "completed" {
-                            timer?.invalidate()
+                            pollingTimer?.invalidate()
                             downloadFinalVideo()
                         } else if status.status == "failed" {
-                            timer?.invalidate()
+                            pollingTimer?.invalidate()
                             isProcessing = false
-                            alertMessage = "Lỗi xử lý: \(status.error ?? "Không rõ nguyên nhân")"
+                            alertMessage = "Lỗi xử lý: \(status.error ?? "Không rõ")"
                             showAlert = true
                         }
                     case .failure:
@@ -493,9 +1129,8 @@ public struct ContentView: View {
         }
     }
 
-    // Tải video kết quả
     func downloadFinalVideo() {
-        progressStage = "Đang tải video thành phẩm về iPhone..."
+        progressStage = "Đang tải video hoàn thiện về máy..."
         APIManager.shared.downloadResultVideo(serverURL: serverURL, taskId: currentTaskId) { res in
             DispatchQueue.main.async {
                 isProcessing = false
@@ -503,8 +1138,7 @@ public struct ContentView: View {
                 case .success(let fileURL):
                     outputVideoURL = fileURL
                     resultPlayer = AVPlayer(url: fileURL)
-                    alertMessage = "🎉 Video đã dịch và biên tập hoàn tất!"
-                    showAlert = true
+                    showResultModal = true
                 case .failure(let err):
                     alertMessage = "Lỗi tải video: \(err.localizedDescription)"
                     showAlert = true
@@ -513,16 +1147,42 @@ public struct ContentView: View {
         }
     }
 
-    // Lưu vào Album ảnh
     func saveToPhotoLibrary() {
         guard let url = outputVideoURL else { return }
         PHPhotoLibrary.shared().performChanges({
             PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
         }) { success, error in
             DispatchQueue.main.async {
-                alertMessage = success ? "Đã lưu video thành công vào Photos!" : "Lỗi lưu: \(error?.localizedDescription ?? "")"
+                alertMessage = success ? "🎉 Đã lưu video thành công vào Photos!" : "Lỗi lưu: \(error?.localizedDescription ?? "")"
                 showAlert = true
             }
         }
+    }
+}
+
+// MARK: - Color Hex Extension
+extension Color {
+    init(hex: String) {
+        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: hex).scanHexInt64(&int)
+        let a, r, g, b: UInt64
+        switch hex.count {
+        case 3:
+            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
+        case 6:
+            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
+        case 8:
+            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        default:
+            (a, r, g, b) = (1, 1, 1, 0)
+        }
+        self.init(
+            .sRGB,
+            red: Double(r) / 255,
+            green: Double(g) / 255,
+            blue: Double(b) / 255,
+            opacity: Double(a) / 255
+        )
     }
 }

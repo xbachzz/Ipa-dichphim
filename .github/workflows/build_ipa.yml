@@ -27,9 +27,10 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_STYLE="Manual" \
+            CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGNING_ALLOWED=YES
 
       - name: Package to IPA
         run: |
@@ -37,7 +38,15 @@ jobs:
           APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" -type d | head -n 1)
           echo "Found app at: $APP_PATH"
           cp -r "$APP_PATH" Payload/
-          zip -qr TranslateDubApp.ipa Payload
+          
+          # Thực hiện Ad-Hoc Code Signing đảm bảo binary có LC_CODE_SIGNATURE và thư mục _CodeSignature
+          codesign --force --deep --sign - "Payload/TranslateDubApp.app"
+          
+          # Xác thực tính toàn vẹn chữ ký Ad-Hoc
+          codesign -dvvv "Payload/TranslateDubApp.app"
+          
+          # Đóng gói chuẩn IPA với cờ -qry bảo lưu symbolic links và permissions
+          zip -qry TranslateDubApp.ipa Payload
           rm -rf Payload
 
       - name: Upload IPA Artifact

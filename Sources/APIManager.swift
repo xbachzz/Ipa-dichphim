@@ -18,21 +18,24 @@ public class APIManager {
             return
         }
 
+        guard let videoData = try? Data(contentsOf: videoURL), !videoData.isEmpty else {
+            completion(.failure(NSError(domain: "File", code: -1, userInfo: [NSLocalizedDescriptionKey: "Không thể đọc dữ liệu video"])))
+            return
+        }
+
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 120
+        request.timeoutInterval = 180
 
         let boundary = "Boundary-\(UUID().uuidString)"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
         var body = Data()
-        if let videoData = try? Data(contentsOf: videoURL) {
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"video\"; filename=\"input.mp4\"\r\n".data(using: .utf8)!)
-            body.append("Content-Type: video/mp4\r\n\r\n".data(using: .utf8)!)
-            body.append(videoData)
-            body.append("\r\n".data(using: .utf8)!)
-        }
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"video\"; filename=\"input.mp4\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: video/mp4\r\n\r\n".data(using: .utf8)!)
+        body.append(videoData)
+        body.append("\r\n".data(using: .utf8)!)
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
         URLSession.shared.uploadTask(with: request, from: body) { data, _, error in

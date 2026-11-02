@@ -39,6 +39,8 @@ public struct ContentView: View {
     @State private var isPlaying: Bool = false
     @State private var currentTime: Double = 0.0
     @State private var videoDuration: Double = 60.0
+    @State private var videoAspectRatio: CGFloat = 9.0 / 16.0
+    @State private var isLoadingVideo: Bool = false
     @State private var timeObserverToken: Any? = nil
     @State private var showMaskOverlay: Bool = true
 
@@ -220,7 +222,7 @@ public struct ContentView: View {
             }
 
             // Loading Overlay khi đang xử lý
-            if isExtractingSTT || isTranslating || isGeneratingTTS || isRendering {
+            if isExtractingSTT || isTranslating || isGeneratingTTS || isRendering || isLoadingVideo {
                 loadingOverlayView
             }
         }
@@ -249,7 +251,9 @@ public struct ContentView: View {
         .onChange(of: isTranslating) { _ in updateScreenIdleTimer() }
         .onChange(of: isGeneratingTTS) { _ in updateScreenIdleTimer() }
         .onChange(of: isRendering) { _ in updateScreenIdleTimer() }
+        .onChange(of: isLoadingVideo) { _ in updateScreenIdleTimer() }
         .onChange(of: alwaysKeepScreenAwake) { _ in updateScreenIdleTimer() }
+        .onChange(of: selectedVoice) { _ in ttsReady = false }
     }
 
     // MARK: - Top Navigation Bar
@@ -380,7 +384,7 @@ public struct ContentView: View {
 
                 if let p = player {
                     VideoPlayer(player: p)
-                        .aspectRatio(9.0 / 16.0, contentMode: .fit)
+                        .aspectRatio(videoAspectRatio, contentMode: .fit)
                         .frame(maxWidth: geo.size.width, maxHeight: geo.size.height)
                 }
 
@@ -784,26 +788,23 @@ public struct ContentView: View {
                     .cornerRadius(8)
 
                     // Danh sách câu thoại gốc
-                    ScrollView {
-                        LazyVStack(spacing: 6) {
-                            ForEach(filteredCues) { cue in
-                                HStack(alignment: .top, spacing: 8) {
-                                    Text("[\(cue.timeFormatted)]")
-                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                        .foregroundColor(Color(hex: "00ADB5"))
-                                        .padding(.top, 2)
-                                    Text(cue.original_text)
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.white)
-                                    Spacer()
-                                }
-                                .padding(8)
-                                .background(Color(hex: "161C28"))
-                                .cornerRadius(8)
+                    LazyVStack(spacing: 6) {
+                        ForEach(filteredCues) { cue in
+                            HStack(alignment: .top, spacing: 8) {
+                                Text("[\(cue.timeFormatted)]")
+                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .foregroundColor(Color(hex: "00ADB5"))
+                                    .padding(.top, 2)
+                                Text(cue.original_text)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.white)
+                                Spacer()
                             }
+                            .padding(8)
+                            .background(Color(hex: "161C28"))
+                            .cornerRadius(8)
                         }
                     }
-                    .frame(maxHeight: 240)
                 }
                 .padding(14)
                 .background(Color(hex: "141A26"))
@@ -916,53 +917,50 @@ public struct ContentView: View {
                         }
                     }
 
-                    ScrollView {
-                        LazyVStack(spacing: 10) {
-                            ForEach($cues) { $cue in
-                                VStack(alignment: .leading, spacing: 6) {
-                                    HStack {
-                                        Text("[\(cue.timeFormatted)]")
-                                            .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                            .foregroundColor(Color(hex: "00ADB5"))
-                                        Text(cue.original_text)
+                    LazyVStack(spacing: 10) {
+                        ForEach($cues) { $cue in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("[\(cue.timeFormatted)]")
+                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        .foregroundColor(Color(hex: "00ADB5"))
+                                    Text(cue.original_text)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(Color(hex: "8D99AE"))
+                                        .lineLimit(1)
+                                    Spacer()
+
+                                    // Nút nghe thử trực tiếp câu này
+                                    Button(action: {
+                                        Haptic.play(.light)
+                                        APIManager.shared.playTTSPreview(
+                                            serverURL: serverURL,
+                                            text: cue.translated_text,
+                                            voiceID: selectedVoice
+                                        )
+                                    }) {
+                                        Image(systemName: "speaker.wave.2.fill")
                                             .font(.system(size: 11))
-                                            .foregroundColor(Color(hex: "8D99AE"))
-                                            .lineLimit(1)
-                                        Spacer()
-
-                                        // Nút nghe thử trực tiếp câu này
-                                        Button(action: {
-                                            Haptic.play(.light)
-                                            APIManager.shared.playTTSPreview(
-                                                serverURL: serverURL,
-                                                text: cue.translated_text,
-                                                voiceID: selectedVoice
-                                            )
-                                        }) {
-                                            Image(systemName: "speaker.wave.2.fill")
-                                                .font(.system(size: 11))
-                                                .foregroundColor(Color(hex: "00ADB5"))
-                                                .padding(6)
-                                                .background(Color(hex: "1F2738"))
-                                                .clipShape(Circle())
-                                        }
+                                            .foregroundColor(Color(hex: "00ADB5"))
+                                            .padding(6)
+                                            .background(Color(hex: "1F2738"))
+                                            .clipShape(Circle())
                                     }
-
-                                    TextField("Câu dịch tiếng Việt", text: $cue.translated_text)
-                                        .font(.system(size: 13))
-                                        .padding(9)
-                                        .background(Color(hex: "1A2230"))
-                                        .cornerRadius(8)
-                                        .foregroundColor(.white)
                                 }
-                                .padding(10)
-                                .background(Color(hex: "121722"))
-                                .cornerRadius(10)
-                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "1F2738"), lineWidth: 1))
+
+                                TextField("Câu dịch tiếng Việt", text: $cue.translated_text)
+                                    .font(.system(size: 13))
+                                    .padding(9)
+                                    .background(Color(hex: "1A2230"))
+                                    .cornerRadius(8)
+                                    .foregroundColor(.white)
                             }
+                            .padding(10)
+                            .background(Color(hex: "121722"))
+                            .cornerRadius(10)
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "1F2738"), lineWidth: 1))
                         }
                     }
-                    .frame(maxHeight: 280)
                 }
                 .padding(14)
                 .background(Color(hex: "141A26"))
@@ -1212,36 +1210,33 @@ public struct ContentView: View {
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(Color(hex: "10B981"))
 
-                    ScrollView {
-                        LazyVStack(spacing: 6) {
-                            ForEach(cues) { cue in
-                                HStack {
-                                    Text("[\(cue.timeFormatted)]")
-                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    LazyVStack(spacing: 6) {
+                        ForEach(cues) { cue in
+                            HStack {
+                                Text("[\(cue.timeFormatted)]")
+                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .foregroundColor(Color(hex: "00ADB5"))
+                                Text(cue.translated_text)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.white)
+                                    .lineLimit(1)
+                                Spacer()
+                                Button(action: {
+                                    Haptic.play(.light)
+                                    APIManager.shared.playTTSPreview(serverURL: serverURL, text: cue.translated_text, voiceID: selectedVoice)
+                                }) {
+                                    Image(systemName: "speaker.wave.2.fill")
                                         .foregroundColor(Color(hex: "00ADB5"))
-                                    Text(cue.translated_text)
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.white)
-                                        .lineLimit(1)
-                                    Spacer()
-                                    Button(action: {
-                                        Haptic.play(.light)
-                                        APIManager.shared.playTTSPreview(serverURL: serverURL, text: cue.translated_text, voiceID: selectedVoice)
-                                    }) {
-                                        Image(systemName: "speaker.wave.2.fill")
-                                            .foregroundColor(Color(hex: "00ADB5"))
-                                            .padding(6)
-                                            .background(Color(hex: "1E2433"))
-                                            .clipShape(Circle())
-                                    }
+                                        .padding(6)
+                                        .background(Color(hex: "1E2433"))
+                                        .clipShape(Circle())
                                 }
-                                .padding(8)
-                                .background(Color(hex: "161A26"))
-                                .cornerRadius(8)
                             }
+                            .padding(8)
+                            .background(Color(hex: "161A26"))
+                            .cornerRadius(8)
                         }
                     }
-                    .frame(maxHeight: 180)
                 }
                 .padding(14)
                 .background(Color(hex: "141824"))
@@ -1699,9 +1694,10 @@ public struct ContentView: View {
 
                 VStack(spacing: 6) {
                     Text(
-                        isExtractingSTT ? "Đang trích xuất SRT qua CapCut STT..." :
+                        isLoadingVideo ? "Đang nạp video từ thư viện..." :
+                        (isExtractingSTT ? "Đang trích xuất SRT qua CapCut STT..." :
                         (isTranslating ? "Đang dịch kịch bản qua 9Router AI..." :
-                        (isGeneratingTTS ? "Đang tạo giọng đọc CapCut SAMI..." : "Đang render video FFmpeg siêu tốc..."))
+                        (isGeneratingTTS ? "Đang tạo giọng đọc CapCut SAMI..." : "Đang render video FFmpeg siêu tốc...")))
                     )
                     .font(.system(size: 15, weight: .bold))
                     .foregroundColor(.white)
@@ -1742,7 +1738,7 @@ public struct ContentView: View {
     }
 
     func updateScreenIdleTimer() {
-        let shouldKeepAwake = alwaysKeepScreenAwake || isExtractingSTT || isTranslating || isGeneratingTTS || isRendering
+        let shouldKeepAwake = alwaysKeepScreenAwake || isExtractingSTT || isTranslating || isGeneratingTTS || isRendering || isLoadingVideo
         UIApplication.shared.isIdleTimerDisabled = shouldKeepAwake
     }
 
@@ -1847,27 +1843,65 @@ public struct ContentView: View {
     }
 
     func loadSelectedVideo(_ item: PhotosPickerItem?) {
+        guard let item = item else { return }
+        isLoadingVideo = true
         Task {
-            if let data = try? await item?.loadTransferable(type: Data.self) {
-                let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("input_video.mp4")
-                try? data.write(to: tempURL)
-                DispatchQueue.main.async {
-                    selectedVideoURL = tempURL
-                    let newPlayer = AVPlayer(url: tempURL)
-                    player = newPlayer
-                    setupTimeObserver(newPlayer)
+            do {
+                if let data = try await item.loadTransferable(type: Data.self) {
+                    let uniqueId = UUID().uuidString.prefix(8)
+                    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("input_\(uniqueId).mp4")
+                    try data.write(to: tempURL)
 
                     let asset = AVAsset(url: tempURL)
-                    Task {
-                        if let dur = try? await asset.load(.duration) {
-                            let sec = CMTimeGetSeconds(dur)
-                            DispatchQueue.main.async {
-                                videoDuration = sec
-                                trimStart = 0.0
-                                trimEnd = sec
-                            }
+                    var detectedRatio: CGFloat = 9.0 / 16.0
+                    var durSec: Double = 60.0
+
+                    if let dur = try? await asset.load(.duration) {
+                        durSec = CMTimeGetSeconds(dur)
+                    }
+
+                    if let track = try? await asset.loadTracks(withMediaType: .video).first,
+                       let size = try? await track.load(.naturalSize) {
+                        let t = try? await track.load(.preferredTransform)
+                        let isPortrait = (t?.a == 0 && abs(t?.b ?? 0) == 1) || (t?.d == 0 && abs(t?.c ?? 0) == 1)
+                        let w = isPortrait ? size.height : size.width
+                        let h = isPortrait ? size.width : size.height
+                        if w > 0 && h > 0 {
+                            detectedRatio = CGFloat(w / h)
                         }
                     }
+
+                    await MainActor.run {
+                        if let token = timeObserverToken {
+                            player?.removeTimeObserver(token)
+                            timeObserverToken = nil
+                        }
+                        player?.pause()
+                        player = nil
+
+                        selectedVideoURL = tempURL
+                        videoAspectRatio = detectedRatio
+                        videoDuration = durSec
+                        trimStart = 0.0
+                        trimEnd = durSec
+
+                        let newPlayer = AVPlayer(url: tempURL)
+                        player = newPlayer
+                        setupTimeObserver(newPlayer)
+                        isLoadingVideo = false
+                    }
+                } else {
+                    await MainActor.run {
+                        isLoadingVideo = false
+                        alertMessage = "Không thể đọc dữ liệu video từ thư viện."
+                        showAlert = true
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isLoadingVideo = false
+                    alertMessage = "Lỗi nạp video: \(error.localizedDescription)"
+                    showAlert = true
                 }
             }
         }
@@ -1898,6 +1932,14 @@ public struct ContentView: View {
     }
 
     func resetProject() {
+        if let token = timeObserverToken {
+            player?.removeTimeObserver(token)
+            timeObserverToken = nil
+        }
+        player?.pause()
+        player = nil
+        resultPlayer?.pause()
+        resultPlayer = nil
         selectedItem = nil
         selectedVideoURL = nil
         projectId = ""
@@ -1905,8 +1947,7 @@ public struct ContentView: View {
         currentStep = 1
         outputVideoURL = nil
         ttsReady = false
-        player?.pause()
-        player = nil
+        isPlaying = false
     }
 
     func saveToPhotoLibrary() {

@@ -73,7 +73,8 @@ public class APIManager {
                   let cuesRaw = json["cues"] as? [[String: Any]],
                   let cuesData = try? JSONSerialization.data(withJSONObject: cuesRaw),
                   let cues = try? JSONDecoder().decode([SubtitleCue].self, from: cuesData) else {
-                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Không nhận dạng được câu thoại"])))
+                let errMsg = (data != nil ? (try? JSONSerialization.jsonObject(with: data!) as? [String: Any])?["error"] as? String : nil) ?? "Không nhận dạng được câu thoại"
+                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: errMsg])))
                 return
             }
             completion(.success(cues))
@@ -108,7 +109,8 @@ public class APIManager {
                   let cuesRaw = json["cues"] as? [[String: Any]],
                   let cuesData = try? JSONSerialization.data(withJSONObject: cuesRaw),
                   let translatedCues = try? JSONDecoder().decode([SubtitleCue].self, from: cuesData) else {
-                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Lỗi dịch phụ đề qua 9Router"])))
+                let errMsg = (data != nil ? (try? JSONSerialization.jsonObject(with: data!) as? [String: Any])?["error"] as? String : nil) ?? "Lỗi dịch phụ đề qua 9Router"
+                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: errMsg])))
                 return
             }
             completion(.success(translatedCues))

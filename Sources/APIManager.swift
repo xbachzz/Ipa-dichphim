@@ -81,12 +81,47 @@ public class APIManager {
         }.resume()
     }
 
-    // BƯỚC 3: Dịch SRT qua 9Router AI
+    // LẤY DANH SÁCH MODEL DỊCH TỪ SERVER
+    public func fetchModels(
+        serverURL: String,
+        completion: @escaping (Result<[TranslationModel], Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/models") else {
+            completion(.failure(NSError(domain: "URL", code: -1, userInfo: [NSLocalizedDescriptionKey: "Đường dẫn server không hợp lệ"])))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 10
+
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            if let error = error { completion(.failure(error)); return }
+            guard let data = data else {
+                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Không nhận được phản hồi"])))
+                return
+            }
+
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let modelsRaw = (json["models"] ?? json["data"]) as? [[String: Any]],
+               let modelsData = try? JSONSerialization.data(withJSONObject: modelsRaw),
+               let models = try? JSONDecoder().decode([TranslationModel].self, from: modelsData) {
+                completion(.success(models))
+            } else if let models = try? JSONDecoder().decode([TranslationModel].self, from: data) {
+                completion(.success(models))
+            } else {
+                completion(.failure(NSError(domain: "Server", code: -1, userInfo: [NSLocalizedDescriptionKey: "Dữ liệu model server không hợp lệ"])))
+            }
+        }.resume()
+    }
+
+    // BƯỚC 3: Dịch SRT qua AI (Hỗ trợ chọn model động)
     public func stepTranslate(
         serverURL: String,
         projectId: String,
         cues: [SubtitleCue],
         genre: String,
+        model: String? = nil,
         completion: @escaping (Result<[SubtitleCue], Error>) -> Void
     ) {
         guard let url = URL(string: "\(serverURL.trimmingCharacters(in: .whitespacesAndNewlines))/api/step/translate") else { return }
@@ -99,7 +134,10 @@ public class APIManager {
         guard let cuesData = try? JSONEncoder().encode(cues),
               let cuesJson = try? JSONSerialization.jsonObject(with: cuesData) else { return }
 
-        let body: [String: Any] = ["project_id": projectId, "cues": cuesJson, "genre": genre]
+        var body: [String: Any] = ["project_id": projectId, "cues": cuesJson, "genre": genre]
+        if let model = model, !model.isEmpty {
+            body["model"] = model
+        }
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         URLSession.shared.dataTask(with: request) { data, _, error in

@@ -62,7 +62,18 @@ public struct ContentView: View {
     @State private var cueSearchQuery: String = ""
     @State private var isExtractingSTT: Bool = false
 
-    // CÔNG ĐOẠN 3: Dịch SRT & Chỉnh sửa tùy chỉnh (9Router)
+    // CÔNG ĐOẠN 3: Dịch SRT & Chỉnh sửa tùy chỉnh (AI Model)
+    @AppStorage("selected_translation_model") private var selectedModel: String = "dsk/deepseek-chat"
+    @State private var availableModels: [TranslationModel] = [
+        TranslationModel(id: "dsk/deepseek-chat", name: "DeepSeek V3 (9Router / DsApiCli - Siêu Tốc)", provider: "DeepSeek", is_default: true),
+        TranslationModel(id: "dsk/deepseek-reasoner", name: "DeepSeek R1 (9Router / DsApiCli - Suy Luận)", provider: "DeepSeek"),
+        TranslationModel(id: "cd/gpt-4o", name: "GPT-4o (Codex)", provider: "Codex"),
+        TranslationModel(id: "cd/gpt-5", name: "GPT-5 (Codex)", provider: "Codex"),
+        TranslationModel(id: "cd/gpt-6-astra", name: "GPT-6 Astra (Codex)", provider: "Codex"),
+        TranslationModel(id: "cd/o3-mini", name: "o3-mini (Codex)", provider: "Codex")
+    ]
+    @State private var isFetchingModels: Bool = false
+    @State private var showModelPickerSheet: Bool = false
     @State private var selectedGenre: String = "phim_chung"
     @State private var isTranslating: Bool = false
 
@@ -118,6 +129,10 @@ public struct ContentView: View {
 
     var currentVoiceItem: VoiceItem? {
         VoiceCatalog.allVietnameseVoices.first(where: { $0.id == selectedVoice })
+    }
+
+    var currentModelItem: TranslationModel? {
+        availableModels.first(where: { $0.id == selectedModel })
     }
 
     var filteredCues: [SubtitleCue] {
@@ -235,6 +250,9 @@ public struct ContentView: View {
                 ShareSheet(items: [out])
             }
         }
+        .sheet(isPresented: $showModelPickerSheet) {
+            modelPickerSheetView
+        }
         .alert(isPresented: $showAlert) {
             Alert(title: Text("Thông Báo"), message: Text(alertMessage), dismissButton: .default(Text("Đóng")))
         }
@@ -246,6 +264,10 @@ public struct ContentView: View {
         }
         .onAppear {
             updateScreenIdleTimer()
+            fetchModelsFromServer(isManual: false)
+        }
+        .onChange(of: serverURL) { _ in
+            fetchModelsFromServer(isManual: false)
         }
         .onChange(of: isExtractingSTT) { _ in updateScreenIdleTimer() }
         .onChange(of: isTranslating) { _ in updateScreenIdleTimer() }
@@ -837,7 +859,90 @@ public struct ContentView: View {
     // MARK: - CÔNG ĐOẠN 3: Dịch SRT & Chỉnh sửa tùy chỉnh
     var step3TranslateView: some View {
         VStack(alignment: .leading, spacing: 14) {
-            stepHeader(stepNum: "3", title: "Dịch SRT & Chỉnh Sửa Tùy Chỉnh", desc: "9Router AI dịch theo văn phong điện ảnh. Bạn có thể sửa câu từ trực tiếp.")
+            stepHeader(stepNum: "3", title: "Dịch SRT & Chỉnh Sửa Tùy Chỉnh", desc: "Dịch AI theo văn phong điện ảnh chuyên nghiệp. Bạn có thể chọn model và sửa câu từ trực tiếp.")
+
+            // Chọn Model AI Dịch Thuật
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("MODEL AI DỊCH THUẬT")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(Color(hex: "8D99AE"))
+                        .tracking(0.5)
+
+                    Spacer()
+
+                    Button(action: {
+                        Haptic.play(.light)
+                        fetchModelsFromServer(isManual: true)
+                    }) {
+                        HStack(spacing: 4) {
+                            if isFetchingModels {
+                                ProgressView()
+                                    .scaleEffect(0.6)
+                                    .tint(Color(hex: "00ADB5"))
+                            } else {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 10, weight: .bold))
+                            }
+                            Text(isFetchingModels ? "Đang tải..." : "Cập nhật từ Server")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        .foregroundColor(Color(hex: "00ADB5"))
+                    }
+                }
+
+                Button(action: {
+                    Haptic.play(.light)
+                    showModelPickerSheet = true
+                }) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "cpu.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(Color(hex: "00ADB5"))
+                            .frame(width: 34, height: 34)
+                            .background(Color(hex: "1A2B38"))
+                            .cornerRadius(8)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text(currentModelItem?.name ?? selectedModel)
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .lineLimit(1)
+
+                                Spacer()
+
+                                if let p = currentModelItem?.provider {
+                                    Text(p)
+                                        .font(.system(size: 9, weight: .bold))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(p == "DeepSeek" ? Color(hex: "00ADB5").opacity(0.2) : Color(hex: "A855F7").opacity(0.2))
+                                        .foregroundColor(p == "DeepSeek" ? Color(hex: "00ADB5") : Color(hex: "A855F7"))
+                                        .cornerRadius(4)
+                                }
+                            }
+
+                            Text("Mã model: \(selectedModel)")
+                                .font(.system(size: 10))
+                                .foregroundColor(Color(hex: "8D99AE"))
+                                .lineLimit(1)
+                        }
+
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(Color(hex: "8D99AE"))
+                    }
+                    .padding(12)
+                    .background(Color(hex: "182030"))
+                    .cornerRadius(10)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "263248"), lineWidth: 1))
+                }
+            }
+            .padding(14)
+            .background(Color(hex: "141A26"))
+            .cornerRadius(12)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(hex: "1F2738"), lineWidth: 1))
 
             // Chọn văn phong dịch
             VStack(alignment: .leading, spacing: 8) {
@@ -884,7 +989,7 @@ public struct ContentView: View {
                     Spacer()
                     Image(systemName: "sparkles")
                         .font(.system(size: 16))
-                    Text("Dịch Sang Tiếng Việt (9Router AI)")
+                    Text("Dịch Sang Tiếng Việt (\(currentModelItem?.provider ?? "AI"))")
                         .font(.system(size: 14, weight: .bold))
                     Spacer()
                 }
@@ -1580,9 +1685,39 @@ public struct ContentView: View {
         }
     }
 
+    func fetchModelsFromServer(isManual: Bool = false) {
+        if isFetchingModels { return }
+        isFetchingModels = true
+        APIManager.shared.fetchModels(serverURL: serverURL) { res in
+            DispatchQueue.main.async {
+                isFetchingModels = false
+                switch res {
+                case .success(let models):
+                    if !models.isEmpty {
+                        availableModels = models
+                        if !models.contains(where: { $0.id == selectedModel }) {
+                            if let def = models.first(where: { $0.is_default == true }) ?? models.first {
+                                selectedModel = def.id
+                            }
+                        }
+                        if isManual {
+                            Haptic.notify(.success)
+                            showToastNotification("Đã cập nhật \(models.count) model từ server!")
+                        }
+                    }
+                case .failure(let err):
+                    if isManual {
+                        Haptic.notify(.error)
+                        showToastNotification("Không thể lấy model: \(err.localizedDescription)")
+                    }
+                }
+            }
+        }
+    }
+
     func runTranslate() {
         isTranslating = true
-        APIManager.shared.stepTranslate(serverURL: serverURL, projectId: projectId, cues: cues, genre: selectedGenre) { res in
+        APIManager.shared.stepTranslate(serverURL: serverURL, projectId: projectId, cues: cues, genre: selectedGenre, model: selectedModel) { res in
             DispatchQueue.main.async {
                 isTranslating = false
                 switch res {
@@ -1958,6 +2093,135 @@ public struct ContentView: View {
             DispatchQueue.main.async {
                 alertMessage = success ? "🎉 Đã lưu video thành công vào Photos!" : "Lỗi lưu: \(error?.localizedDescription ?? "")"
                 showAlert = true
+            }
+        }
+    }
+
+    // MARK: - Model Picker Sheet
+    var modelPickerSheetView: some View {
+        NavigationView {
+            ZStack {
+                Color(hex: "0D1117").ignoresSafeArea()
+
+                VStack(spacing: 0) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("MÔ HÌNH DỊCH THUẬT HIỆN CÓ")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(Color(hex: "8D99AE"))
+                            Text("Được đồng bộ trực tiếp từ server VPS")
+                                .font(.system(size: 11))
+                                .foregroundColor(Color(hex: "8D99AE").opacity(0.8))
+                        }
+
+                        Spacer()
+
+                        Button(action: {
+                            Haptic.play(.light)
+                            fetchModelsFromServer(isManual: true)
+                        }) {
+                            HStack(spacing: 5) {
+                                if isFetchingModels {
+                                    ProgressView().scaleEffect(0.7).tint(Color(hex: "00ADB5"))
+                                } else {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                        .font(.system(size: 11, weight: .bold))
+                                }
+                                Text("Làm Mới")
+                                    .font(.system(size: 11, weight: .bold))
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color(hex: "1C2433"))
+                            .foregroundColor(Color(hex: "00ADB5"))
+                            .cornerRadius(8)
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "00ADB5").opacity(0.4), lineWidth: 1))
+                        }
+                        .disabled(isFetchingModels)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color(hex: "141A26"))
+
+                    Divider().background(Color(hex: "1F2738"))
+
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            ForEach(availableModels) { m in
+                                let isSelected = (m.id == selectedModel)
+                                Button(action: {
+                                    Haptic.play(.medium)
+                                    selectedModel = m.id
+                                    showModelPickerSheet = false
+                                    showToastNotification("Đã chọn model: \(m.name)")
+                                }) {
+                                    HStack(spacing: 12) {
+                                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                            .font(.system(size: 18, weight: .semibold))
+                                            .foregroundColor(isSelected ? Color(hex: "00ADB5") : Color(hex: "4B5563"))
+
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            HStack(spacing: 6) {
+                                                Text(m.name)
+                                                    .font(.system(size: 14, weight: .bold))
+                                                    .foregroundColor(isSelected ? .white : Color(hex: "D1D5DB"))
+                                                    .lineLimit(1)
+
+                                                if m.is_default == true {
+                                                    Text("Khuyên Dùng")
+                                                        .font(.system(size: 9, weight: .bold))
+                                                        .padding(.horizontal, 5)
+                                                        .padding(.vertical, 1.5)
+                                                        .background(Color(hex: "10B981").opacity(0.2))
+                                                        .foregroundColor(Color(hex: "10B981"))
+                                                        .cornerRadius(4)
+                                                }
+                                            }
+
+                                            HStack(spacing: 8) {
+                                                if let p = m.provider {
+                                                    Text(p)
+                                                        .font(.system(size: 9, weight: .bold))
+                                                        .padding(.horizontal, 6)
+                                                        .padding(.vertical, 2)
+                                                        .background(p == "DeepSeek" ? Color(hex: "00ADB5").opacity(0.15) : Color(hex: "A855F7").opacity(0.15))
+                                                        .foregroundColor(p == "DeepSeek" ? Color(hex: "00ADB5") : Color(hex: "A855F7"))
+                                                        .cornerRadius(4)
+                                                }
+
+                                                Text(m.id)
+                                                    .font(.system(size: 11, design: .monospaced))
+                                                    .foregroundColor(Color(hex: "8D99AE"))
+                                                    .lineLimit(1)
+                                            }
+                                        }
+
+                                        Spacer()
+                                    }
+                                    .padding(14)
+                                    .background(isSelected ? Color(hex: "1A2B38") : Color(hex: "141A26"))
+                                    .cornerRadius(12)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(isSelected ? Color(hex: "00ADB5") : Color(hex: "1F2738"), lineWidth: isSelected ? 1.5 : 1)
+                                    )
+                                }
+                            }
+                        }
+                        .padding(16)
+                    }
+                }
+            }
+            .navigationTitle("Chọn Model AI Dịch")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Xong") {
+                        showModelPickerSheet = false
+                    }
+                    .foregroundColor(Color(hex: "00ADB5"))
+                    .font(.system(size: 14, weight: .bold))
+                }
             }
         }
     }

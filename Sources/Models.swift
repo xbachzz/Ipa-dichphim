@@ -54,3 +54,17 @@ public struct RenderResult {
         self.speedRatio = speedRatio
     }
 }
+
+public struct TranslationModel: Identifiable, Codable, Hashable {
+    public var id: String
+    public var name: String
+    public var provider: String?
+    public var is_default: Bool?
+
+    public init(id: String, name: String, provider: String? = nil, is_default: Bool? = false) {
+        self.id = id
+        self.name = name
+        self.provider = provider
+        self.is_default = is_default
+    }
+}
